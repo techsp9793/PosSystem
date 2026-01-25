@@ -1,0 +1,332 @@
+﻿@* 
+@using MudBlazor
+@inject ISnackbar Snackbar
+@implements IDisposable
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Verify OTP</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body1" Class="mb-4">
+            Enter the 6-digit OTP sent to <strong>+91 @PhoneNumber</strong>
+        </MudText>
+
+        <MudTextField @bind-Value="OtpInput"
+                      Label="OTP"
+                      Variant="Variant.Outlined"
+                      InputType="InputType.Text"
+                      Placeholder="Enter 6-digit code"
+                      Immediate="true"
+                      Class="mb-4"
+                      MaxLength="6"
+                      Counter="6"
+                      @onkeyup="OnOtpKeyUp"
+                      Style="text-align: center; letter-spacing: 0.5rem; font-size: 1.5rem; font-weight: bold;" />
+
+        @if (!string.IsNullOrEmpty(ErrorMessage))
+        {
+            <MudAlert Severity="Severity.Error" Dense="true" Class="mb-4">
+                @ErrorMessage
+            </MudAlert>
+        }
+
+        <MudText Typo="Typo.body2" Class="text-center">
+            Didn't receive the code?
+            <MudLink OnClick="ResendOtp" Disabled="@(Countdown > 0)" Class="ml-1">
+                @(Countdown > 0 ? $"Resend in {Countdown}s" : "Resend OTP")
+            </MudLink>
+        </MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Color="Color.Default">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   OnClick="Verify"
+                   Disabled="@(string.IsNullOrWhiteSpace(OtpInput) || OtpInput.Length != 6)">
+            Verify
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public string PhoneNumber { get; set; } = "";
+
+    [Parameter]
+    public string GeneratedOtp { get; set; } = "";
+
+    private string OtpInput { get; set; } = "";
+    private int Countdown { get; set; } = 60;
+    private string ErrorMessage { get; set; } = "";
+    private System.Timers.Timer? timer;
+
+    protected override void OnInitialized()
+    {
+        StartTimer();
+    }
+
+    private void StartTimer()
+    {
+        timer?.Dispose();
+        Countdown = 60;
+        timer = new System.Timers.Timer(1000);
+        timer.Elapsed += async (s, e) =>
+        {
+            Countdown--;
+            if (Countdown <= 0)
+            {
+                timer?.Stop();
+            }
+            await InvokeAsync(StateHasChanged);
+        };
+        timer.Start();
+    }
+
+    private void OnOtpKeyUp(KeyboardEventArgs e)
+    {
+        ErrorMessage = "";
+
+        if (e.Key == "Enter" && OtpInput.Length == 6)
+        {
+            _ = Verify();
+        }
+    }
+
+    private async Task Verify()
+    {
+        if (string.IsNullOrWhiteSpace(OtpInput) || OtpInput.Length != 6)
+        {
+            ErrorMessage = "Please enter a valid 6-digit OTP";
+            return;
+        }
+
+        if (OtpInput != GeneratedOtp)
+        {
+            ErrorMessage = "Invalid OTP. Please try again.";
+            OtpInput = "";
+            return;
+        }
+
+        // OTP is correct
+        Snackbar.Add("OTP verified successfully!", Severity.Success);
+        MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    private async Task ResendOtp()
+    {
+        if (Countdown > 0) return;
+
+        // For now, just restart the timer
+        // In a real app, you'd call the parent to regenerate and send a new OTP
+        OtpInput = "";
+        ErrorMessage = "";
+        StartTimer();
+        Snackbar.Add("Feature coming soon - close and click 'Send OTP' again", Severity.Info);
+    }
+
+    private void Cancel()
+    {
+        MudDialog.Cancel();
+    }
+
+    public void Dispose()
+    {
+        timer?.Dispose();
+    }
+} *@
+@using MudBlazor
+@inject ISnackbar Snackbar
+@implements IDisposable
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body1" Class="mb-4">
+            Enter the 6-digit OTP sent to <strong>+91 @PhoneNumber</strong>
+        </MudText>
+
+        <MudTextField @bind-Value="OtpInput"
+                      Label="OTP"
+                      Variant="Variant.Outlined"
+                      InputType="InputType.Text"
+                      Placeholder="Enter 6-digit code"
+                      Immediate="true"
+                      Class="mb-4"
+                      MaxLength="6"
+                      Counter="6"
+                      Disabled="@_isVerifying"
+                      @onkeyup="OnOtpKeyUp"
+                      Style="text-align: center; letter-spacing: 0.5rem; font-size: 1.5rem; font-weight: bold;" />
+
+        @if (!string.IsNullOrEmpty(_errorMessage))
+        {
+            <MudAlert Severity="Severity.Error" Dense="true" Class="mb-4">
+                @_errorMessage
+            </MudAlert>
+        }
+
+        <MudText Typo="Typo.body2" Class="text-center">
+            Didn't receive the code?
+            <MudLink OnClick="ResendOtp"
+                     Disabled="@(_countdown > 0 || _isVerifying)"
+                     Class="ml-1">
+                @(_countdown > 0 ? $"Resend in {_countdown}s" : "Resend OTP")
+            </MudLink>
+        </MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel"
+                   Color="Color.Default"
+                   Disabled="@_isVerifying">
+            Cancel
+        </MudButton>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   OnClick="Verify"
+                   Disabled="@(string.IsNullOrWhiteSpace(OtpInput) || OtpInput.Length != 6 || _isVerifying)">
+            @if (_isVerifying)
+            {
+                <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                <MudText Class="ms-2">Verifying...</MudText>
+            }
+            else
+            {
+                <MudText>Verify</MudText>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+<LoadingOverlay IsVisible="@_isVerifying" Message="Verifying your OTP..." />
+
+@code {
+    [CascadingParameter]
+    IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public string PhoneNumber { get; set; } = "";
+
+    [Parameter]
+    public string GeneratedOtp { get; set; } = "";
+
+    [Parameter]
+    public EventCallback<string> OnVerificationComplete { get; set; }
+
+    private string OtpInput { get; set; } = "";
+    private int _countdown { get; set; } = 60;
+    private string _errorMessage { get; set; } = "";
+    private bool _isVerifying { get; set; } = false;
+    private System.Timers.Timer? _timer;
+    private bool _disposed = false;
+
+    protected override void OnInitialized()
+    {
+        StartTimer();
+    }
+
+    private void StartTimer()
+    {
+        _timer?.Dispose();
+        _countdown = 60;
+        _timer = new System.Timers.Timer(1000);
+        _timer.Elapsed += async (s, e) =>
+        {
+            if (_disposed) return;
+
+            _countdown--;
+            if (_countdown <= 0)
+            {
+                _timer?.Stop();
+            }
+
+            try
+            {
+                await InvokeAsync(StateHasChanged);
+            }
+            catch
+            {
+                // Component disposed, stop timer
+                _timer?.Stop();
+            }
+        };
+        _timer.Start();
+    }
+
+    private void OnOtpKeyUp(KeyboardEventArgs e)
+    {
+        _errorMessage = "";
+
+        if (e.Key == "Enter" && OtpInput.Length == 6 && !_isVerifying)
+        {
+            _ = Verify();
+        }
+    }
+
+    private async Task Verify()
+    {
+        if (string.IsNullOrWhiteSpace(OtpInput) || OtpInput.Length != 6)
+        {
+            _errorMessage = "Please enter a valid 6-digit OTP";
+            return;
+        }
+
+        if (OtpInput != GeneratedOtp)
+        {
+            _errorMessage = "Invalid OTP. Please try again.";
+            OtpInput = "";
+            return;
+        }
+
+        try
+        {
+            _isVerifying = true;
+            StateHasChanged();
+
+            // Call parent verification logic
+            if (OnVerificationComplete.HasDelegate)
+            {
+                await OnVerificationComplete.InvokeAsync(OtpInput);
+            }
+
+            // Only close if verification succeeded
+            Snackbar.Add("OTP verified successfully!", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            _isVerifying = false;
+            _errorMessage = "Verification failed. Please try again.";
+            OtpInput = "";
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+            StateHasChanged();
+        }
+    }
+
+    private async Task ResendOtp()
+    {
+        if (_countdown > 0 || _isVerifying) return;
+
+        OtpInput = "";
+        _errorMessage = "";
+        StartTimer();
+        Snackbar.Add("Please close the dialog and click 'Send OTP' again", Severity.Info);
+    }
+
+    private void Cancel()
+    {
+        if (!_isVerifying)
+        {
+            MudDialog.Cancel();
+        }
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _timer?.Stop();
+        _timer?.Dispose();
+    }
+}

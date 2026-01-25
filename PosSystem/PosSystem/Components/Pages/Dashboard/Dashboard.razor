@@ -1,0 +1,81 @@
+﻿@page "/dashboard"
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Components.Layout
+@attribute [Authorize]
+@layout MainLayout
+
+<PageTitle>Dashboard - MyPOS</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="pa-6">
+    <MudText Typo="Typo.h3" GutterBottom="true" Class="mb-8">
+        Welcome to Your Dashboard
+    </MudText>
+
+    <!-- Quick Stats Cards -->
+    <MudGrid Spacing="3">
+        <MudItem xs="12" sm="6" md="4">
+            <MudCard Elevation="4">
+                <MudCardHeader>
+                    <CardHeaderAvatar>
+                        <MudAvatar Color="Color.Primary">
+                            <MudIcon Icon="@Icons.Material.Filled.AttachMoney" />
+                        </MudAvatar>
+                    </CardHeaderAvatar>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.subtitle2">Today's Sales</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudText Typo="Typo.h4" Color="Color.Primary">$12,450</MudText>
+                    <MudText Typo="Typo.body2" Class="text-success">+18% from yesterday</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        <MudItem xs="12" sm="6" md="4">
+            <MudCard Elevation="4">
+                <MudCardHeader>
+                    <CardHeaderAvatar>
+                        <MudAvatar Color="Color.Secondary">
+                            <MudIcon Icon="@Icons.Material.Filled.ShoppingCart" />
+                        </MudAvatar>
+                    </CardHeaderAvatar>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.subtitle2">Active Orders</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudText Typo="Typo.h4" Color="Color.Secondary">47</MudText>
+                    <MudText Typo="Typo.body2" Class="text-muted">Pending processing</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        <MudItem xs="12" sm="6" md="4">
+            <MudCard Elevation="4">
+                <MudCardHeader>
+                    <CardHeaderAvatar>
+                        <MudAvatar Color="Color.Success">
+                            <MudIcon Icon="@Icons.Material.Filled.PersonAdd" />
+                        </MudAvatar>
+                    </CardHeaderAvatar>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.subtitle2">New Customers</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudText Typo="Typo.h4" Color="Color.Success">19</MudText>
+                    <MudText Typo="Typo.body2" Class="text-muted">This week</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    <!-- Placeholder for more content -->
+    <MudPaper Elevation="2" Class="pa-6 mt-8">
+        <MudText Typo="Typo.h6" Class="mb-4">Recent Activity</MudText>
+        <MudText Typo="Typo.body1" Class="text-muted">
+            Coming soon: Real-time sales feed, low stock alerts, top products...
+        </MudText>
+    </MudPaper>
+</MudContainer>

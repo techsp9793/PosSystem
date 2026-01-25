@@ -1,0 +1,99 @@
+﻿@using MudBlazor
+@using PosSystem.Client.Services
+@using PosSystem.Client.Themes
+@inherits LayoutComponentBase
+@inject NavigationManager Navigation
+@inject ThemeService ThemeService
+<MudThemeProvider Theme="@AppTheme.Default"
+                  IsDarkMode="@ThemeService.IsDarkMode" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+<MudLayout>
+    <MudAppBar Elevation="1" Dense="true" Fixed="true">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu"
+                       Color="Color.Inherit"
+                       Edge="Edge.Start"
+                       OnClick="ToggleDrawer" />
+        <MudText Typo="Typo.h5" Class="ml-3">
+            MyPOS
+        </MudText>
+        <MudSpacer />
+        <MudSwitch T="bool"
+                   Value="@ThemeService.IsDarkMode"
+                   ValueChanged="@(async (bool val) => await ThemeService.SetDarkModeAsync(val))"
+                   Color="Color.Inherit"
+                   Label="@(ThemeService.IsDarkMode ? "Dark" : "Light")" />
+        <AuthorizeView>
+            <Authorized>
+                <MudMenu Dense="true">
+                    <ActivatorContent>
+                        <MudButton Variant="Variant.Text"
+                                   StartIcon="@Icons.Material.Filled.AccountCircle"
+                                   Color="Color.Inherit">
+                            @context.User.Identity?.Name
+                        </MudButton>
+                    </ActivatorContent>
+                    <ChildContent>
+                        <MudMenuItem Href="Account/Manage">
+                            Profile
+                        </MudMenuItem>
+                        <MudMenuItem OnClick="Logout">
+                            Logout
+                        </MudMenuItem>
+                    </ChildContent>
+                </MudMenu>
+            </Authorized>
+            <NotAuthorized>
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           Href="Account/Login">
+                    Login
+                </MudButton>
+            </NotAuthorized>
+        </AuthorizeView>
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen"
+               Elevation="2"
+               ClipMode="DrawerClipMode.Always"
+               Variant="@DrawerVariant.Mini">
+        <NavMenu />
+    </MudDrawer>
+
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.False"
+                      Class="pa-4"
+                      Style="margin-top: 64px;">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+@code {
+    private bool _drawerOpen = true;
+
+    protected override void OnInitialized()
+    {
+        // Subscribe to changes so the UI repaints when theme changes
+        ThemeService.OnChange += StateHasChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Load the saved theme from the browser's local storage
+            await ThemeService.InitializeAsync();
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose()
+    {
+        // Unsubscribe to prevent memory leaks
+        ThemeService.OnChange -= StateHasChanged;
+    }
+
+    private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
+    private void Logout() => Navigation.NavigateTo("Account/Logout", true);
+}

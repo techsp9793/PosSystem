@@ -1,0 +1,51 @@
+﻿@inherits LayoutComponentBase
+@using MudBlazor
+@using PosSystem.Client.Services
+@using PosSystem.Client.Themes
+@inject ThemeService ThemeService
+<MudThemeProvider Theme="@AppTheme.Default"
+                  IsDarkMode="@ThemeService.IsDarkMode" />
+<MudDialogProvider />
+<MudSnackbarProvider />
+<MudLayout>
+    <MudAppBar Elevation="1" Color="Color.Primary" Class="py-3">
+        <MudText Typo="Typo.h5" Class="ml-4">MyPOS</MudText>
+        <MudSpacer />
+        <MudSwitch T="bool"
+                   Value="@ThemeService.IsDarkMode"
+                   ValueChanged="@(async (bool val) => await ThemeService.SetDarkModeAsync(val))"
+                   Color="Color.Inherit"
+                   Label="@(ThemeService.IsDarkMode ? "Dark" : "Light")" />
+    </MudAppBar>
+
+    <MudMainContent Class="d-flex justify-center align-center"
+                    Style="min-height: calc(100vh - 64px);">
+        <MudContainer MaxWidth="MaxWidth.Medium" Class="pa-8">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    protected override void OnInitialized()
+    {
+        // Subscribe so the theme changes immediately when the switch is clicked
+        ThemeService.OnChange += StateHasChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Load the preference from LocalStorage on refresh/first load
+            await ThemeService.InitializeAsync();
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose()
+    {
+        // Unsubscribe to prevent memory leaks
+        ThemeService.OnChange -= StateHasChanged;
+    }
+}

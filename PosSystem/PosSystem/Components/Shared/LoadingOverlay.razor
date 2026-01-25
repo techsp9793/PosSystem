@@ -1,0 +1,21 @@
+﻿@if (IsVisible)
+{
+    <MudOverlay Visible="true"
+                DarkBackground="true"
+                Absolute="false"
+                ZIndex="9999">
+        <MudStack AlignItems="AlignItems.Center" Spacing="4">
+            <MudProgressCircular Color="Color.Primary"
+                                 Size="Size.Large"
+                                 Indeterminate="true" />
+            <MudText Typo="Typo.h6" Style="color: white;">
+                @Message
+            </MudText>
+        </MudStack>
+    </MudOverlay>
+}
+
+@code {
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public string Message { get; set; } = "Loading...";
+}
