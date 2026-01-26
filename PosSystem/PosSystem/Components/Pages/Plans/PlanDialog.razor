@@ -1,0 +1,146 @@
+﻿@using System.ComponentModel.DataAnnotations
+@using PosSystem.Data.Entities
+@using Microsoft.EntityFrameworkCore
+@using PosSystem.Data
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.AspNetCore.Authorization
+
+@* Ensure only Super Admins can define what plans offer *@
+@attribute [Authorize(Policy = "Permissions.Plans.Edit")]
+
+@inject IUnitOfWork UnitOfWork
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="form" Model="@Model">
+            <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+
+                @* --- TAB 1: PLAN BASICS --- *@
+                <MudTabPanel Text="Details" Icon="@Icons.Material.Filled.Info">
+                    <MudGrid>
+                        <MudItem xs="12" sm="8">
+                            <MudTextField @bind-Value="Model.Name" Label="Plan Name" Required="true" Variant="Variant.Outlined" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            @* [NEW] Plan Type Selection *@
+                            <MudSelect T="PlanType" Label="Billing Cycle" @bind-Value="Model.Type" Variant="Variant.Outlined">
+                                <MudSelectItem Value="PlanType.Monthly">Monthly</MudSelectItem>
+                                <MudSelectItem Value="PlanType.Yearly">Yearly</MudSelectItem>
+                                <MudSelectItem Value="PlanType.OneTime">One Time / Lifetime</MudSelectItem>
+                            </MudSelect>
+                        </MudItem>
+
+                        <MudItem xs="12" sm="6">
+                            <MudNumericField @bind-Value="Model.Price" Label="Price" Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.AttachMoney" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudNumericField @bind-Value="Model.DurationInDays" Label="Duration (Days)" Variant="Variant.Outlined" HelperText="30 for Monthly, 365 for Yearly" />
+                        </MudItem>
+
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="Model.Features" Label="Feature Summary" Lines="2" Variant="Variant.Outlined" />
+                        </MudItem>
+
+                        <MudItem xs="12">
+                            <MudSwitch @bind-Value="Model.IsActive" Color="Color.Success" Label="Visible to Clients" />
+                        </MudItem>
+                    </MudGrid>
+                </MudTabPanel>
+
+                @* --- TAB 2: PERMISSION MAPPING --- *@
+                <MudTabPanel Text="Permissions" Icon="@Icons.Material.Filled.LockOpen">
+                    @if (IsLoading)
+                    {
+                        <div class="d-flex justify-center pa-4">
+                            <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+                        </div>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Class="mb-2">Select features available in this plan tier:</MudText>
+                        <MudDivider Class="mb-2" />
+
+                        @foreach (var group in AllPermissions.GroupBy(p => p.GroupName))
+                        {
+                            <MudText Typo="Typo.subtitle2" Color="Color.Primary" Class="mt-4 mb-1">@group.Key</MudText>
+                            <MudGrid Spacing="1" Class="mb-2">
+                                @foreach (var perm in group)
+                                {
+                                    <MudItem xs="12" sm="6">
+                                        <MudCheckBox T="bool"
+                                                     Label="@perm.Name"
+                                                     Value="@SelectedPermissions.Contains(perm.PermissionCode)"
+                                                     ValueChanged="@((bool val) => TogglePermission(perm.PermissionCode, val))"
+                                                     Color="Color.Primary"
+                                                     Dense="true" />
+                                    </MudItem>
+                                }
+                            </MudGrid>
+                        }
+                    }
+                </MudTabPanel>
+            </MudTabs>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">Save Plan Configuration</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public SubscriptionPlan Model { get; set; } = new();
+
+    private MudForm form = default!;
+    private List<SystemPermission> AllPermissions = new();
+    private HashSet<string> SelectedPermissions = new();
+    private bool IsLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        IsLoading = true;
+        try
+        {
+            // Load All Master Permissions via UnitOfWork
+            var allPerms = await UnitOfWork.SystemPermissions.GetAllAsync();
+            AllPermissions = allPerms.OrderBy(p => p.GroupName).ThenBy(p => p.Name).ToList();
+
+            // Load the specific codes already assigned to this Plan
+            if (!string.IsNullOrEmpty(Model.Id))
+            {
+                var existing = await UnitOfWork.PlanPermissions.FindAsync(p => p.SubscriptionPlanId == Model.Id);
+                SelectedPermissions = existing.Select(p => p.PermissionCode).ToHashSet();
+            }
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private void TogglePermission(string code, bool isChecked)
+    {
+        if (isChecked) SelectedPermissions.Add(code);
+        else SelectedPermissions.Remove(code);
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+    private void OnTypeChanged(PlanType type)
+    {
+        Model.Type = type;
+        // Auto-fill duration based on type
+        if (type == PlanType.Monthly) Model.DurationInDays = 30;
+        else if (type == PlanType.Yearly) Model.DurationInDays = 365;
+        else if (type == PlanType.OneTime) Model.DurationInDays = 9999;
+    }
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (form.IsValid)
+        {
+            // Return the object structure your Index.razor expects for its dynamic extraction
+            MudDialog.Close(DialogResult.Ok(new { Plan = Model, Permissions = SelectedPermissions }));
+        }
+    }
+}

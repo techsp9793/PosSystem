@@ -1,81 +1,132 @@
 ﻿@page "/dashboard"
 @using Microsoft.AspNetCore.Authorization
 @using PosSystem.Components.Layout
+@using PosSystem.Data.Repositories.Interfaces
+@using System.Security.Claims
 @attribute [Authorize]
 @layout MainLayout
 
+@inject IServiceProvider ServiceProvider
+@inject AuthenticationStateProvider AuthStateProvider
+
 <PageTitle>Dashboard - MyPOS</PageTitle>
 
-<MudContainer MaxWidth="MaxWidth.False" Class="pa-6">
-    <MudText Typo="Typo.h3" GutterBottom="true" Class="mb-8">
-        Welcome to Your Dashboard
+<MudText Typo="Typo.h3" GutterBottom="true" Class="mb-8">
+    Welcome to Your Dashboard
+</MudText>
+
+<MudGrid Spacing="3">
+    @* --- FINANCIAL METRICS --- *@
+    <AuthorizeView Policy="Permissions.Reports.Sales">
+        <Authorized>
+            <MudItem xs="12" sm="6" md="4">
+                <MudCard Elevation="4">
+                    <MudCardHeader>
+                        <CardHeaderAvatar>
+                            <MudAvatar Color="Color.Primary">
+                                <MudIcon Icon="@Icons.Material.Filled.AttachMoney" />
+                            </MudAvatar>
+                        </CardHeaderAvatar>
+                        <CardHeaderContent>
+                            <MudText Typo="Typo.subtitle2">Today's Sales</MudText>
+                        </CardHeaderContent>
+                    </MudCardHeader>
+                    <MudCardContent>
+                        <MudText Typo="Typo.h4" Color="Color.Primary">@todaySales.ToString("C")</MudText>
+                        <MudText Typo="Typo.body2" Class="green-text">Updated just now</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        </Authorized>
+        <NotAuthorized>
+            <MudItem xs="12" sm="6" md="4">
+                <MudCard Elevation="4" Style="background-color: var(--mud-palette-surface-light);">
+                    <MudCardContent>
+                        <MudText Typo="Typo.body2" Color="Color.Error">
+                            <MudIcon Icon="@Icons.Material.Filled.Lock" Size="Size.Small" Class="mr-2" />
+                            Financial data is restricted.
+                        </MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        </NotAuthorized>
+    </AuthorizeView>
+
+    @* --- OPERATIONAL METRICS (Always visible to Auth users) --- *@
+    <MudItem xs="12" sm="6" md="4">
+        <MudCard Elevation="4">
+            <MudCardHeader>
+                <CardHeaderAvatar>
+                    <MudAvatar Color="Color.Secondary">
+                        <MudIcon Icon="@Icons.Material.Filled.ShoppingCart" />
+                    </MudAvatar>
+                </CardHeaderAvatar>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.subtitle2">Active Orders</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudText Typo="Typo.h4" Color="Color.Secondary">@activeOrdersCount</MudText>
+                <MudText Typo="Typo.body2" Class="text-muted">Current processing</MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <MudItem xs="12" sm="6" md="4">
+        <MudCard Elevation="4">
+            <MudCardHeader>
+                <CardHeaderAvatar>
+                    <MudAvatar Color="Color.Success">
+                        <MudIcon Icon="@Icons.Material.Filled.PersonAdd" />
+                    </MudAvatar>
+                </CardHeaderAvatar>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.subtitle2">New Customers</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudText Typo="Typo.h4" Color="Color.Success">@newCustomersCount</MudText>
+                <MudText Typo="Typo.body2" Class="text-muted">This week</MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+<MudPaper Elevation="2" Class="pa-6 mt-8">
+    <MudText Typo="Typo.h6" Class="mb-4">Context Information</MudText>
+    <MudText Typo="Typo.body1">
+        Current View: <b>@viewContext</b>
     </MudText>
+</MudPaper>
 
-    <!-- Quick Stats Cards -->
-    <MudGrid Spacing="3">
-        <MudItem xs="12" sm="6" md="4">
-            <MudCard Elevation="4">
-                <MudCardHeader>
-                    <CardHeaderAvatar>
-                        <MudAvatar Color="Color.Primary">
-                            <MudIcon Icon="@Icons.Material.Filled.AttachMoney" />
-                        </MudAvatar>
-                    </CardHeaderAvatar>
-                    <CardHeaderContent>
-                        <MudText Typo="Typo.subtitle2">Today's Sales</MudText>
-                    </CardHeaderContent>
-                </MudCardHeader>
-                <MudCardContent>
-                    <MudText Typo="Typo.h4" Color="Color.Primary">$12,450</MudText>
-                    <MudText Typo="Typo.body2" Class="text-success">+18% from yesterday</MudText>
-                </MudCardContent>
-            </MudCard>
-        </MudItem>
+@code {
+    private decimal todaySales = 0;
+    private int activeOrdersCount = 0;
+    private int newCustomersCount = 0;
+    private string viewContext = "Loading...";
 
-        <MudItem xs="12" sm="6" md="4">
-            <MudCard Elevation="4">
-                <MudCardHeader>
-                    <CardHeaderAvatar>
-                        <MudAvatar Color="Color.Secondary">
-                            <MudIcon Icon="@Icons.Material.Filled.ShoppingCart" />
-                        </MudAvatar>
-                    </CardHeaderAvatar>
-                    <CardHeaderContent>
-                        <MudText Typo="Typo.subtitle2">Active Orders</MudText>
-                    </CardHeaderContent>
-                </MudCardHeader>
-                <MudCardContent>
-                    <MudText Typo="Typo.h4" Color="Color.Secondary">47</MudText>
-                    <MudText Typo="Typo.body2" Class="text-muted">Pending processing</MudText>
-                </MudCardContent>
-            </MudCard>
-        </MudItem>
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        var tenantId = user.FindFirst("tenant_id")?.Value;
 
-        <MudItem xs="12" sm="6" md="4">
-            <MudCard Elevation="4">
-                <MudCardHeader>
-                    <CardHeaderAvatar>
-                        <MudAvatar Color="Color.Success">
-                            <MudIcon Icon="@Icons.Material.Filled.PersonAdd" />
-                        </MudAvatar>
-                    </CardHeaderAvatar>
-                    <CardHeaderContent>
-                        <MudText Typo="Typo.subtitle2">New Customers</MudText>
-                    </CardHeaderContent>
-                </MudCardHeader>
-                <MudCardContent>
-                    <MudText Typo="Typo.h4" Color="Color.Success">19</MudText>
-                    <MudText Typo="Typo.body2" Class="text-muted">This week</MudText>
-                </MudCardContent>
-            </MudCard>
-        </MudItem>
-    </MudGrid>
+        // Create a local scope for DB operations to avoid concurrency issues
+        using var scope = ServiceProvider.CreateScope();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
-    <!-- Placeholder for more content -->
-    <MudPaper Elevation="2" Class="pa-6 mt-8">
-        <MudText Typo="Typo.h6" Class="mb-4">Recent Activity</MudText>
-        <MudText Typo="Typo.body1" Class="text-muted">
-            Coming soon: Real-time sales feed, low stock alerts, top products...
-        </MudText>
-    </MudPaper>
-</MudContainer>
+        if (string.IsNullOrEmpty(tenantId))
+        {
+            // SUPER ADMIN LOGIC: Fetch Global Data
+            viewContext = "System-Wide (SuperAdmin)";
+            // todaySales = await unitOfWork.Orders.GetGlobalSalesAsync();
+        }
+        else
+        {
+            // TENANT LOGIC: Fetch Filtered Data
+            var tenant = await unitOfWork.Tenants.GetByIdAsync(tenantId);
+            viewContext = $"Tenant: {tenant?.Name ?? "Unknown"}";
+            // todaySales = await unitOfWork.Orders.GetTodaySalesAsync(tenantId);
+        }
+    }
+}

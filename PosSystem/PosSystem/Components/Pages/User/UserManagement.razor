@@ -1,0 +1,176 @@
+﻿@page "/admin/users"
+@using Microsoft.AspNetCore.Identity
+@using PosSystem.Data
+@using PosSystem.Data.Entities
+@using PosSystem.Services
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Components.Pages.User
+
+@attribute [Authorize(Policy = "Permissions.Users.View")]
+
+@inject UserManager<ApplicationUser> UserManager
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject ITenantService TenantService
+@inject IUnitOfWork UnitOfWork
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>Staff Management</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="mt-4">
+    <div class="d-flex justify-space-between align-center mb-4">
+        <MudText Typo="Typo.h5">Staff Management</MudText>
+
+        <AuthorizeView Policy="Permissions.Users.Create">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.PersonAdd"
+                       OnClick="CreateAsync">
+                Create Staff Member
+            </MudButton>
+        </AuthorizeView>
+    </div>
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        <MudTable Items="@userList" Hover="true" Striped="true" Elevation="2" Context="staff">
+            <HeaderContent>
+                <MudTh>User</MudTh>
+                <MudTh>Email</MudTh>
+                <MudTh>Role</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh Style="text-align:right">Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="User">
+                    <div class="d-flex align-center">
+                        <MudAvatar Color="Color.Secondary" Class="mr-3" Size="Size.Small">
+                            @staff.User.UserName?.FirstOrDefault().ToString().ToUpper()
+                        </MudAvatar>
+                        @staff.User.UserName
+                    </div>
+                </MudTd>
+                <MudTd DataLabel="Email">@staff.User.Email</MudTd>
+                <MudTd DataLabel="Role">
+                    <MudChip T="string" Color="Color.Info" Size="Size.Small" Variant="Variant.Text">
+                        @staff.RoleName
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Status">
+                    @if (staff.User.EmailConfirmed)
+                    {
+                        <MudChip T="string" Color="Color.Success" Size="Size.Small">Active</MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Warning" Size="Size.Small">Pending</MudChip>
+                    }
+                </MudTd>
+                <MudTd Style="text-align:right">
+                    @* --- EDIT BUTTON --- *@
+                    <AuthorizeView Policy="Permissions.Users.Edit">
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                       Color="Color.Primary"
+                                       Size="Size.Small"
+                                       OnClick="@(() => EditAsync(staff.User))" />
+                    </AuthorizeView>
+
+                    @* --- DELETE BUTTON --- *@
+                    <AuthorizeView Policy="Permissions.Users.Delete">
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                       Color="Color.Error"
+                                       Size="Size.Small"
+                                       OnClick="@(() => DeleteAsync(staff.User))" />
+                    </AuthorizeView>
+                </MudTd>
+            </RowTemplate>
+            <PagerContent>
+                <MudTablePager />
+            </PagerContent>
+        </MudTable>
+    }
+</MudContainer>
+
+@code {
+    public class UserRowModel
+    {
+        public ApplicationUser User { get; set; } = default!;
+        public string RoleName { get; set; } = "No Role";
+    }
+
+    private List<UserRowModel> userList = new();
+    private bool isLoading = true;
+    private string? currentTenantId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        currentTenantId = authState.User.FindFirst("tenant_id")?.Value;
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        userList.Clear();
+        var users = await UnitOfWork.Users.FindAsync(u => u.TenantId == currentTenantId);
+
+        foreach (var user in users)
+        {
+            var roles = await UserManager.GetRolesAsync(user);
+            userList.Add(new UserRowModel
+            {
+                User = user,
+                RoleName = roles.FirstOrDefault() ?? "No Role"
+            });
+        }
+        isLoading = false;
+    }
+
+    private async Task CreateAsync()
+    {
+        var parameters = new DialogParameters { ["TenantId"] = currentTenantId };
+        var dialog = await DialogService.ShowAsync<UserDialog>("Add Staff Member", parameters);
+        var result = await dialog.Result;
+
+        if (!result.Canceled) await LoadDataAsync();
+    }
+
+    //  Added the Edit method to pass the existing user to the dialog
+    private async Task EditAsync(ApplicationUser user)
+    {
+        var parameters = new DialogParameters
+        {
+            ["Model"] = user,
+            ["TenantId"] = currentTenantId
+        };
+
+        var dialog = await DialogService.ShowAsync<UserDialog>("Edit Staff Member", parameters);
+        var result = await dialog.Result;
+
+        if (!result.Canceled) await LoadDataAsync();
+    }
+
+    private async Task DeleteAsync(ApplicationUser user)
+    {
+        var confirm = await DialogService.ShowMessageBox(
+            "Confirm Delete",
+            $"Are you sure you want to remove {user.UserName}?",
+            yesText: "Delete", cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            var result = await UserManager.DeleteAsync(user);
+            if (result.Succeeded)
+            {
+                Snackbar.Add("User removed successfully.", Severity.Success);
+                await LoadDataAsync();
+            }
+        }
+    }
+}

@@ -8,6 +8,17 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Components\Account\**" />
+    <Content Remove="Components\Account\**" />
+    <EmbeddedResource Remove="Components\Account\**" />
+    <None Remove="Components\Account\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Remove="Components\Pages\Auth\LoginBridge.razor" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\PosSystem.Client\PosSystem.Client.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.Facebook" Version="8.0.23" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.Google" Version="8.0.23" />

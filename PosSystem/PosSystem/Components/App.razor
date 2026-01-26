@@ -3,7 +3,6 @@
 @using Microsoft.AspNetCore.Http
 @inject ThemeService ThemeService
 @inject IHttpContextAccessor HttpContextAccessor
-@implements IDisposable
 
 @{
     var cookie = HttpContextAccessor.HttpContext?.Request.Cookies["isDarkMode"];
@@ -15,6 +14,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    Navigation.NavigateTo($"/auth/login-bridge?userId={user.Id}", forceLoad: true);
     <base href="/" />
     <link rel="stylesheet" href="app.css" />
     <link rel="stylesheet" href="PosSystem.styles.css" />
@@ -31,16 +31,7 @@
     </script>
 </head>
 <body>
-    @{
-        if (!_isInitialized)
-        {
-            ThemeService.SetDarkMode(isDark);
-        }
-    }
 
-    <MudThemeProvider Theme="@AppTheme.Default" IsDarkMode="@ThemeService.IsDarkMode" />
-    <MudDialogProvider />
-    <MudSnackbarProvider />
     <Routes @rendermode="InteractiveServer" />
 
     <script src="_framework/blazor.web.js"></script>
@@ -52,16 +43,4 @@
         };
     </script>
 </body>
-
-@code {
-        private bool _isInitialized = false;
-
-        protected override void OnInitialized()
-        {
-                _isInitialized = true;
-                ThemeService.OnChange += StateHasChanged;
-        }
-
-        public void Dispose() => ThemeService.OnChange -= StateHasChanged;
-}
 </html>

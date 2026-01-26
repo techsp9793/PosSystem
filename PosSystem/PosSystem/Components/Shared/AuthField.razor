@@ -17,7 +17,6 @@
 @code {
     [Parameter] public string Label { get; set; } = string.Empty;
 
-    // ✅ REQUIRED — this fixes your exception
     [Parameter] public string Placeholder { get; set; } = string.Empty;
 
     [Parameter] public string Icon { get; set; }
@@ -33,21 +32,6 @@
     [Parameter] public string AdornmentIcon { get; set; }
 
     [Parameter] public EventCallback OnAdornmentClick { get; set; }
-
-    // ✅ Allows Class="mt-6" and other attributes
     [Parameter(CaptureUnmatchedValues = true)]
     public Dictionary<string, object> AdditionalAttributes { get; set; }
 }
-
-@* @code {
-    [Parameter] public string Label { get; set; } = string.Empty;
-    [Parameter] public string Icon { get; set; } = string.Empty;
-    [Parameter] public string Placeholder { get; set; } = string.Empty;
-    // ✅ MUST be MudBlazor.InputType
-    [Parameter] public InputType InputType { get; set; } = InputType.Text;
-
-    [Parameter] public string? Value { get; set; }
-    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
-    [Parameter(CaptureUnmatchedValues = true)]
-    public Dictionary<string, object> AdditionalAttributes { get; set; }
-} *@

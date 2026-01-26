@@ -1,6 +1,67 @@
-﻿<MudNavMenu Border="true" Margin="Margin.Dense" Rounded="true">
-    <MudNavLink Href="dashboard" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">Home</MudNavLink>
-    <MudNavLink Href="counter" Icon="@Icons.Material.Filled.AddCircle">Counter</MudNavLink>
-    <MudNavLink Href="weather" Icon="@Icons.Material.Filled.Cloud">Weather</MudNavLink>
-    <MudNavLink Href="auth" Icon="@Icons.Material.Filled.Lock">Auth Test</MudNavLink>
-</MudNavMenu>
+﻿@using Microsoft.AspNetCore.Authorization
+@using MudBlazor
+@inject NavigationManager Navigation
+
+@* Wrapper forces the menu to take full height of the drawer *@
+<div class="d-flex flex-column" style="height: 100%; min-height: calc(100vh - 64px);">
+
+    @* --- TOP SECTION (Dashboard & Admin) --- *@
+    <div class="flex-grow-1">
+        <MudNavMenu>
+            @* Spacer to push Dashboard away from the top bar *@
+            <div style="height: 32px;"></div>
+
+            <MudNavLink Href="/dashboard" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">
+                Dashboard
+            </MudNavLink>
+
+            <AuthorizeView Policy="Permissions.Tenants.View">
+                <Authorized>
+                    <MudNavLink Href="/admin/tenants" Icon="@Icons.Material.Filled.Business">Tenants</MudNavLink>
+                </Authorized>
+            </AuthorizeView>
+            @* --- SUBSCRIPTION PLANS --- *@
+            <AuthorizeView Policy="Permissions.Plans.View">
+                <Authorized>
+                    <MudNavLink Href="/admin/plans" Icon="@Icons.Material.Filled.CardMembership">Subscription Plans</MudNavLink>
+                </Authorized>
+            </AuthorizeView>
+            <AuthorizeView Policy="Permissions.Users.View" Context="userMgmt">
+                <Authorized>
+                    <MudNavGroup Title="User Management" Icon="@Icons.Material.Filled.ManageAccounts">
+                        <MudNavLink Href="/admin/users" Icon="@Icons.Material.Filled.People">Users</MudNavLink>
+                        <AuthorizeView Policy="Permissions.Roles.View" Context="roleContext">
+                            <Authorized>
+                                <MudNavLink Href="/admin/roles" Icon="@Icons.Material.Filled.Security">Roles</MudNavLink>
+                            </Authorized>
+                        </AuthorizeView>
+                    </MudNavGroup>
+                </Authorized>
+            </AuthorizeView>
+        </MudNavMenu>
+    </div>
+
+    @* --- BOTTOM SECTION (Profile & Logout) --- *@
+    <div class="mt-auto pb-4">
+        <MudDivider Class="my-2" />
+        <MudNavMenu>
+            <MudNavLink Href="/user/profile" Icon="@Icons.Material.Filled.Person">Profile</MudNavLink>
+
+           
+            <MudNavLink OnClick="HandleLogout"
+                        Icon="@Icons.Material.Filled.Logout"
+                        IconColor="Color.Error"
+                        Class="logout-link">
+                Logout
+            </MudNavLink>
+        </MudNavMenu>
+    </div>
+</div>
+
+@code {
+    @* [FIX] Clean logout redirect to the bridge *@
+    private void HandleLogout()
+    {
+        Navigation.NavigateTo("/auth/logout", forceLoad: true);
+    }
+}

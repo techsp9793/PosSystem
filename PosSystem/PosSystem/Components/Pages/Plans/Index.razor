@@ -1,0 +1,157 @@
+﻿@page "/admin/plans"
+@using PosSystem.Data.Entities
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.EntityFrameworkCore
+@using PosSystem.Data
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Components.Pages.Plans
+
+@attribute [Authorize(Policy = "Permissions.Plans.View")]
+@inject IUnitOfWork UnitOfWork
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>Subscription Plans</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="mt-4">
+    <div class="d-flex justify-space-between align-center mb-4">
+        <MudText Typo="Typo.h5">Subscription Plans</MudText>
+
+        <AuthorizeView Policy="Permissions.Plans.Create">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="CreateAsync">
+                Create Plan
+            </MudButton>
+        </AuthorizeView>
+    </div>
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        <MudTable Items="@plans" Hover="true" Striped="true" Elevation="2" Context="plan">
+            <HeaderContent>
+                <MudTh>Plan Name</MudTh>
+                <MudTh>Type</MudTh> @* [NEW] *@
+                <MudTh>Price</MudTh>
+                <MudTh>Duration</MudTh>
+                <MudTh>Status</MudTh>
+                @* Simplified Actions Header *@
+                <MudTh Style="text-align:right">Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Name">@plan.Name</MudTd>
+                <MudTd DataLabel="Type">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Info">@plan.Type</MudChip>
+                </MudTd>
+                <MudTd DataLabel="Price">@plan.Price.ToString("C")</MudTd>
+                <MudTd DataLabel="Duration">@plan.DurationInDays Days</MudTd>
+                <MudTd DataLabel="Status">
+                    <MudChip T="string" Size="Size.Small" Color="@(plan.IsActive? Color.Success: Color.Error)">
+                        @(plan.IsActive ? "Public" : "Hidden")
+                    </MudChip>
+                </MudTd>
+                <MudTd Style="text-align:right">
+                    <AuthorizeView Policy="Permissions.Plans.Edit">
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" OnClick="@(() => EditAsync(plan))" />
+                    </AuthorizeView>
+                    <AuthorizeView Policy="Permissions.Plans.Delete">
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="@(() => DeleteAsync(plan))" />
+                    </AuthorizeView>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudContainer>
+
+@code {
+    private IEnumerable<SubscriptionPlan> plans = new List<SubscriptionPlan>();
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync() => await LoadDataAsync();
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        plans = await UnitOfWork.SubscriptionPlans.GetAllAsync();
+        isLoading = false;
+    }
+
+    private async Task CreateAsync()
+    {
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<PlanDialog>("Create Plan", options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled && result.Data != null)
+        {
+            dynamic data = result.Data;
+            SubscriptionPlan newPlan = data.Plan;
+            HashSet<string> permissions = data.Permissions;
+
+            await UnitOfWork.SubscriptionPlans.AddAsync(newPlan);
+            await UnitOfWork.CompleteAsync();
+            await SavePermissionsAsync(newPlan.Id, permissions);
+
+            Snackbar.Add("Plan created successfully!", Severity.Success);
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task EditAsync(SubscriptionPlan plan)
+    {
+        // Fix for DialogParameters type safety
+        var parameters = new DialogParameters { ["Model"] = plan };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+
+        var dialog = await DialogService.ShowAsync<PlanDialog>("Edit Plan", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled && result.Data != null)
+        {
+            dynamic data = result.Data;
+            SubscriptionPlan updatedPlan = data.Plan;
+            HashSet<string> permissions = data.Permissions;
+
+            UnitOfWork.SubscriptionPlans.Update(updatedPlan);
+            await UnitOfWork.CompleteAsync();
+            await SavePermissionsAsync(updatedPlan.Id, permissions);
+
+            Snackbar.Add("Plan updated successfully!", Severity.Success);
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task SavePermissionsAsync(string planId, HashSet<string> selectedPermissions)
+    {
+        var existing = await UnitOfWork.PlanPermissions.FindAsync(p => p.SubscriptionPlanId == planId);
+        foreach (var item in existing) UnitOfWork.PlanPermissions.Remove(item);
+
+        foreach (var code in selectedPermissions)
+        {
+            await UnitOfWork.PlanPermissions.AddAsync(new PlanPermission
+            {
+                SubscriptionPlanId = planId,
+                PermissionCode = code
+            });
+        }
+        await UnitOfWork.CompleteAsync();
+    }
+
+    private async Task DeleteAsync(SubscriptionPlan plan)
+    {
+        bool? confirm = await DialogService.ShowMessageBox("Warning", $"Delete '{plan.Name}'?", yesText: "Delete", cancelText: "Cancel");
+        if (confirm == true)
+        {
+            var perms = await UnitOfWork.PlanPermissions.FindAsync(p => p.SubscriptionPlanId == plan.Id);
+            foreach (var p in perms) UnitOfWork.PlanPermissions.Remove(p);
+
+            UnitOfWork.SubscriptionPlans.Remove(plan);
+            await UnitOfWork.CompleteAsync();
+
+            Snackbar.Add("Plan deleted!", Severity.Warning);
+            await LoadDataAsync();
+        }
+    }
+}

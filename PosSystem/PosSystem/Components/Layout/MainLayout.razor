@@ -1,21 +1,25 @@
-﻿@using MudBlazor
+﻿@using Microsoft.AspNetCore.Identity
+@using MudBlazor
 @using PosSystem.Client.Services
 @using PosSystem.Client.Themes
+@using PosSystem.Data
 @inherits LayoutComponentBase
 @inject NavigationManager Navigation
 @inject ThemeService ThemeService
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
 <MudThemeProvider Theme="@AppTheme.Default"
                   IsDarkMode="@ThemeService.IsDarkMode" />
 <MudPopoverProvider />
 <MudDialogProvider />
 <MudSnackbarProvider />
 <MudLayout>
-    <MudAppBar Elevation="1" Dense="true" Fixed="true">
+    <MudAppBar Elevation="1" Dense="true" Fixed="true" Color="Color.Surface">
         <MudIconButton Icon="@Icons.Material.Filled.Menu"
                        Color="Color.Inherit"
                        Edge="Edge.Start"
                        OnClick="ToggleDrawer" />
-        <MudText Typo="Typo.h5" Class="ml-3">
+        <MudText Typo="Typo.h5" Class="ml-3" Color="Color.Inherit">
             MyPOS
         </MudText>
         <MudSpacer />
@@ -26,20 +30,36 @@
                    Label="@(ThemeService.IsDarkMode ? "Dark" : "Light")" />
         <AuthorizeView>
             <Authorized>
-                <MudMenu Dense="true">
+                <MudMenu Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Class="ml-2">
                     <ActivatorContent>
-                        <MudButton Variant="Variant.Text"
-                                   StartIcon="@Icons.Material.Filled.AccountCircle"
-                                   Color="Color.Inherit">
-                            @context.User.Identity?.Name
-                        </MudButton>
+                        @* <MudChip T="string" Color="Color.Surface" Class="ma-0" Style="cursor:pointer"> *@
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                <MudAvatar Color="Color.Primary" Size="Size.Small">
+                                    @if (!string.IsNullOrEmpty(CurrentUserProfileUrl))
+                                    {
+                                        <MudImage Src="@CurrentUserProfileUrl" />
+                                    }
+                                    else
+                                    {
+                                        @context.User.Identity?.Name?.FirstOrDefault().ToString().ToUpper()
+                                    }
+                                </MudAvatar>
+                                <MudText Typo="Typo.body2">@context.User.Identity?.Name</MudText>
+                            </MudStack>
+                       @*  </MudChip> *@
                     </ActivatorContent>
                     <ChildContent>
-                        <MudMenuItem Href="Account/Manage">
-                            Profile
+                        <MudMenuItem Href="/user/profile">
+                            <div class="d-flex align-center">
+                                <MudIcon Icon="@Icons.Material.Filled.ManageAccounts" Class="mr-2" Color="Color.Primary" />
+                                <MudText>My Profile</MudText>
+                            </div>
                         </MudMenuItem>
                         <MudMenuItem OnClick="Logout">
-                            Logout
+                            <div class="d-flex align-center">
+                                <MudIcon Icon="@Icons.Material.Filled.Logout" Class="mr-2" Color="Color.Error" />
+                                <MudText Color="Color.Error">Logout</MudText>
+                            </div>
                         </MudMenuItem>
                     </ChildContent>
                 </MudMenu>
@@ -61,9 +81,9 @@
         <NavMenu />
     </MudDrawer>
 
-    <MudMainContent>
+    <MudMainContent Class="d-flex flex-column" Style="height: 100vh;">
         <MudContainer MaxWidth="MaxWidth.False"
-                      Class="pa-4"
+                     Class="pa-4 flex-grow-1" 
                       Style="margin-top: 64px;">
             @Body
         </MudContainer>
@@ -71,10 +91,21 @@
 </MudLayout>
 @code {
     private bool _drawerOpen = true;
-
-    protected override void OnInitialized()
+    private string? CurrentUserProfileUrl;
+    protected override async Task OnInitializedAsync()
     {
-        // Subscribe to changes so the UI repaints when theme changes
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        if (user.Identity != null && user.Identity.IsAuthenticated)
+        {
+            var appUser = await UserManager.GetUserAsync(user);
+            if (appUser != null)
+            {
+                CurrentUserProfileUrl = appUser.ProfilePictureUrl;
+            }
+        }
+
         ThemeService.OnChange += StateHasChanged;
     }
 
@@ -95,5 +126,6 @@
     }
 
     private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
-    private void Logout() => Navigation.NavigateTo("Account/Logout", true);
+    // Point to the API bridge we just created
+    private void Logout() => Navigation.NavigateTo("/auth/logout", forceLoad: true);
 }

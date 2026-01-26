@@ -1,0 +1,162 @@
+﻿@page "/admin/tenants"
+@using PosSystem.Data.Entities
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Components.Pages.Tenants
+
+@attribute [Authorize(Policy = "Permissions.Tenants.View")]
+@inject IUnitOfWork UnitOfWork
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>Tenant Management</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="mt-4">
+    <div class="d-flex justify-space-between align-center mb-4">
+        <MudText Typo="Typo.h5">Tenant Management</MudText>
+
+        @* 1. CREATE PERMISSION CHECK *@
+        <AuthorizeView Policy="Permissions.Tenants.Create">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="CreateAsync">
+                Create Tenant
+            </MudButton>
+        </AuthorizeView>
+    </div>
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        <MudTable Items="@tenants" Hover="true" Striped="true" Elevation="2" Context="tenant">
+            <HeaderContent>
+                <MudTh>Name</MudTh>
+                <MudTh>Plan</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh>Created At</MudTh>
+                <AuthorizeView Policy="Permissions.Tenants.Edit" Context="authEdit">
+                    <Authorized>
+                        <MudTh>Actions</MudTh>
+                    </Authorized>
+                    <NotAuthorized>
+                        <AuthorizeView Policy="Permissions.Tenants.Delete" Context="authDelete">
+                            <Authorized>
+                                <MudTh>Actions</MudTh>
+                            </Authorized>
+                        </AuthorizeView>
+                    </NotAuthorized>
+                </AuthorizeView>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Name">@tenant.Name</MudTd>
+                <MudTd DataLabel="Plan">
+                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Text">@tenant.PlanType</MudChip>
+                </MudTd>
+                <MudTd DataLabel="Status">
+                    @if (tenant.IsActive)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Success">Active</MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Error">Inactive</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Created">@tenant.CreatedAt.ToShortDateString()</MudTd>
+                <MudTd>
+                    @* 2. EDIT PERMISSION CHECK *@
+                    <AuthorizeView Policy="Permissions.Tenants.Edit">
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                       Color="Color.Primary"
+                                       Size="Size.Small"
+                                       OnClick="@(() => EditAsync(tenant))" />
+                    </AuthorizeView>
+
+                    @* 3. DELETE PERMISSION CHECK *@
+                    <AuthorizeView Policy="Permissions.Tenants.Delete">
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                       Color="Color.Error"
+                                       Size="Size.Small"
+                                       OnClick="@(() => DeleteAsync(tenant))" />
+                    </AuthorizeView>
+                </MudTd>
+            </RowTemplate>
+            <PagerContent>
+                <MudTablePager />
+            </PagerContent>
+        </MudTable>
+    }
+</MudContainer>
+
+@code {
+    private IEnumerable<Tenant> tenants = new List<Tenant>();
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        tenants = await UnitOfWork.Tenants.GetAllAsync();
+        isLoading = false;
+    }
+
+    private async Task CreateAsync()
+    {
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<TenantDialog>("Create Tenant", options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled && result.Data is Tenant newTenant)
+        {
+            await UnitOfWork.Tenants.AddAsync(newTenant);
+            await UnitOfWork.CompleteAsync();
+
+            Snackbar.Add("Tenant created successfully!", Severity.Success);
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task EditAsync(Tenant tenant)
+    {
+        // Use dictionary-based DialogParameters for reliability
+        var parameters = new DialogParameters { ["Model"] = tenant };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+
+        var dialog = await DialogService.ShowAsync<TenantDialog>("Edit Tenant", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled)
+        {
+            UnitOfWork.Tenants.Update(tenant);
+            await UnitOfWork.CompleteAsync();
+
+            Snackbar.Add("Tenant updated successfully!", Severity.Success);
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task DeleteAsync(Tenant tenant)
+    {
+        bool? confirm = await DialogService.ShowMessageBox(
+            "Warning",
+            $"Are you sure you want to delete '{tenant.Name}'?",
+            yesText: "Delete", cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            UnitOfWork.Tenants.Remove(tenant);
+            await UnitOfWork.CompleteAsync();
+
+            Snackbar.Add("Tenant deleted!", Severity.Warning);
+            await LoadDataAsync();
+        }
+    }
+}

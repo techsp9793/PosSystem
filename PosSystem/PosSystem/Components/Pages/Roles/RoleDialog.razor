@@ -1,0 +1,154 @@
+﻿@using Microsoft.AspNetCore.Identity
+@using PosSystem.Data.Entities
+@using PosSystem.Data.Repositories.Interfaces
+@using PosSystem.Services
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Authorization
+
+@attribute [Authorize(Policy = "Permissions.Users.Edit")]
+
+@inject RoleManager<ApplicationRole> RoleManager
+@inject IUnitOfWork UnitOfWork
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="form" Model="@Model">
+            <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
+
+                @* --- TAB 1: ROLE DETAILS --- *@
+                <MudTabPanel Text="Details" Icon="@Icons.Material.Filled.Info">
+                    <MudTextField @bind-Value="Model.Name"
+                                  Label="Role Name"
+                                  Required="true"
+                                  Variant="Variant.Outlined"
+                                  Class="mb-4"
+                                  ReadOnly="@IsSystemRole" />
+
+                    <MudTextField @bind-Value="Model.Description"
+                                  Label="Description"
+                                  Variant="Variant.Outlined"
+                                  Class="mb-4" />
+                </MudTabPanel>
+
+                @* --- TAB 2: PERMISSIONS --- *@
+                <MudTabPanel Text="Permissions" Icon="@Icons.Material.Filled.LockOpen">
+                    @if (IsLoading)
+                    {
+                        <div class="d-flex justify-center pa-4">
+                            <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+                        </div>
+                    }
+                    else if (!AvailablePermissions.Any())
+                    {
+                        <MudAlert Severity="Severity.Warning" Class="mt-2">
+                            @(IsSuperAdmin ? "No system permissions found." : "No permissions available for this tenant's plan.")
+                        </MudAlert>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Class="mb-2">Assign Permissions to this Role:</MudText>
+                        <MudDivider Class="mb-2" />
+
+                        @foreach (var group in AvailablePermissions.GroupBy(p => p.GroupName))
+                        {
+                            <MudText Typo="Typo.subtitle2" Color="Color.Primary" Class="mt-4 mb-1">@group.Key</MudText>
+                            <MudGrid Spacing="1" Class="mb-2">
+                                @foreach (var perm in group)
+                                {
+                                    <MudItem xs="12" sm="6">
+                                        <MudCheckBox T="bool"
+                                                     Label="@perm.Name"
+                                                     Value="@SelectedPermissions.Contains(perm.PermissionCode)"
+                                                     ValueChanged="@((bool val) => TogglePermission(perm.PermissionCode, val))"
+                                                     Dense="true"
+                                                     Color="Color.Primary" />
+                                    </MudItem>
+                                }
+                            </MudGrid>
+                        }
+                    }
+                </MudTabPanel>
+
+            </MudTabs>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">Save Role</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public ApplicationRole Model { get; set; } = new();
+    [Parameter] public string? TenantId { get; set; }
+
+    private MudForm form = default!;
+    private List<SystemPermission> AvailablePermissions = new();
+    private HashSet<string> SelectedPermissions = new();
+    private bool IsLoading = true;
+    private bool IsSuperAdmin = false;
+
+    private bool IsSystemRole => Model.NormalizedName == "ADMIN" && string.IsNullOrEmpty(Model.TenantId);
+
+    protected override async Task OnInitializedAsync()
+    {
+        IsLoading = true;
+        try
+        {
+            var effectiveTenantId = !string.IsNullOrEmpty(TenantId) ? TenantId : Model.TenantId;
+            IsSuperAdmin = string.IsNullOrEmpty(effectiveTenantId);
+
+            if (IsSuperAdmin)
+            {
+                var allPerms = await UnitOfWork.SystemPermissions.GetAllAsync();
+                AvailablePermissions = allPerms.OrderBy(p => p.GroupName).ThenBy(p => p.Name).ToList();
+            }
+            else
+            {
+                var tenant = await UnitOfWork.Tenants.GetByIdAsync(effectiveTenantId!);
+                if (tenant != null)
+                {
+                    var planPerms = await UnitOfWork.PlanPermissions.FindAsync(p => p.SubscriptionPlanId == tenant.SubscriptionPlanId);
+                    var allowedCodes = planPerms.Select(p => p.PermissionCode).ToList();
+
+                    var allPerms = await UnitOfWork.SystemPermissions.GetAllAsync();
+                    AvailablePermissions = allPerms
+                        .Where(p => allowedCodes.Contains(p.PermissionCode))
+                        .OrderBy(p => p.GroupName)
+                        .ThenBy(p => p.Name)
+                        .ToList();
+                }
+            }
+
+            if (!string.IsNullOrEmpty(Model.Id))
+            {
+                var claims = await RoleManager.GetClaimsAsync(Model);
+                SelectedPermissions = claims
+                    .Where(c => c.Type == "Permission")
+                    .Select(c => c.Value)
+                    .ToHashSet();
+            }
+        }
+        catch (Exception) { /* Log error */ }
+        finally { IsLoading = false; }
+    }
+
+    private void TogglePermission(string code, bool isChecked)
+    {
+        if (isChecked) SelectedPermissions.Add(code);
+        else SelectedPermissions.Remove(code);
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (form.IsValid)
+        {
+            MudDialog.Close(DialogResult.Ok(new { Role = Model, Permissions = SelectedPermissions }));
+        }
+    }
+}

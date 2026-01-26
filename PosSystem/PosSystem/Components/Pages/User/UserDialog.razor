@@ -1,0 +1,171 @@
+﻿@using Microsoft.AspNetCore.Identity
+@using PosSystem.Data
+@using PosSystem.Data.Entities
+@using Microsoft.EntityFrameworkCore
+@using PosSystem.Data.Repositories.Interfaces
+@using PosSystem.Services
+@using Microsoft.AspNetCore.Authorization
+
+@attribute [Authorize(Policy = "Permissions.Users.Edit")]
+
+@inject UserManager<ApplicationUser> UserManager
+@inject IUnitOfWork UnitOfWork
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="form" Model="@Model">
+            <MudGrid>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="Model.Email"
+                                  Label="Email (Optional for POS)"
+                                  InputType="InputType.Email"
+                                  Variant="Variant.Outlined"
+                                  Disabled="!IsNewUser"
+                                  HelperText="@(IsNewUser ? "Required for new users" : "Cannot change email here")" />
+                </MudItem>
+
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="Model.UserName"
+                                  Label="Username / Employee ID"
+                                  Required="true"
+                                  Variant="Variant.Outlined"
+                                  Disabled="!IsNewUser" />
+                </MudItem>
+
+                @if (IsNewUser)
+                {
+                    <MudItem xs="12">
+                        <MudTextField @bind-Value="Password"
+                                      Label="Initial Password"
+                                      InputType="InputType.Password"
+                                      Required="true"
+                                      Variant="Variant.Outlined" />
+                    </MudItem>
+                }
+                else
+                {
+                    <MudItem xs="12">
+                        <MudExpansionPanels Elevation="0" Outlined="true">
+                            <MudExpansionPanel Text="Reset Password Only" Icon="@Icons.Material.Filled.LockReset">
+                                <MudTextField @bind-Value="Password"
+                                              Label="New Password"
+                                              InputType="InputType.Password"
+                                              Variant="Variant.Outlined"
+                                              HelperText="Type a new password to reset it, otherwise leave blank." />
+                            </MudExpansionPanel>
+                        </MudExpansionPanels>
+                    </MudItem>
+                }
+
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="string"
+                               Label="Assigned Role"
+                               @bind-Value="SelectedRoleName"
+                               Variant="Variant.Outlined"
+                               AnchorOrigin="Origin.BottomCenter">
+                        @foreach (var role in AvailableRoles)
+                        {
+                            <MudSelectItem Value="@role.Name">@role.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+
+                @* [FIX]: Added Status Toggle here *@
+                <MudItem xs="12" sm="6" Class="d-flex align-center">
+                    <MudSwitch @bind-Value="Model.EmailConfirmed"
+                               Color="Color.Success"
+                               Label="@(Model.EmailConfirmed ? "Status: Active" : "Status: Inactive")" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">
+            @(IsNewUser ? "Create User" : "Save Changes")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public ApplicationUser Model { get; set; } = new();
+    [Parameter] public string? TenantId { get; set; }
+
+    private MudForm form = default!;
+    private string Password { get; set; } = string.Empty;
+    private string SelectedRoleName { get; set; } = string.Empty;
+    private List<ApplicationRole> AvailableRoles = new();
+    private bool IsNewUser => string.IsNullOrEmpty(Model.Id);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var roles = await UnitOfWork.Roles.FindAsync(r => r.TenantId == TenantId);
+        AvailableRoles = roles.OrderBy(r => r.Name).ToList();
+
+        if (!IsNewUser)
+        {
+            var userRoles = await UserManager.GetRolesAsync(Model);
+            SelectedRoleName = userRoles.FirstOrDefault() ?? string.Empty;
+        }
+        else
+        {
+            // Default to Active for new users
+            Model.EmailConfirmed = true;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (form.IsValid)
+        {
+            try
+            {
+                IdentityResult result;
+
+                if (IsNewUser)
+                {
+                    if (string.IsNullOrEmpty(Model.Email)) Model.Email = $"{Model.UserName}@pos.local";
+                    Model.TenantId = TenantId;
+                    result = await UserManager.CreateAsync(Model, Password);
+                }
+                else
+                {
+                    // UpdateAsync saves the EmailConfirmed (Status) change
+                    result = await UserManager.UpdateAsync(Model);
+
+                    if (result.Succeeded && !string.IsNullOrWhiteSpace(Password))
+                    {
+                        var token = await UserManager.GeneratePasswordResetTokenAsync(Model);
+                        await UserManager.ResetPasswordAsync(Model, token, Password);
+                    }
+                }
+
+                if (result.Succeeded)
+                {
+                    var currentRoles = await UserManager.GetRolesAsync(Model);
+                    if (currentRoles.FirstOrDefault() != SelectedRoleName)
+                    {
+                        if (currentRoles.Any()) await UserManager.RemoveFromRolesAsync(Model, currentRoles);
+                        if (!string.IsNullOrEmpty(SelectedRoleName)) await UserManager.AddToRoleAsync(Model, SelectedRoleName);
+                    }
+
+                    Snackbar.Add("User updated successfully.", Severity.Success);
+                    MudDialog.Close(DialogResult.Ok(true));
+                }
+                else
+                {
+                    foreach (var error in result.Errors) Snackbar.Add(error.Description, Severity.Error);
+                }
+            }
+            catch (Exception ex)
+            {
+                Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+            }
+        }
+    }
+}

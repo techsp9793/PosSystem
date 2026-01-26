@@ -12,9 +12,11 @@
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 @inject ILogger<WelcomeAuth> Logger
-
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@inject SignInManager<ApplicationUser> SignInManager
 <PageTitle>@GetPageTitle() - MyPOS</PageTitle>
-
+<MudDialogProvider />
+<MudSnackbarProvider />
 <MudContainer MaxWidth="MaxWidth.Small" Class="d-flex flex-column align-center justify-center" Style="min-height: calc(100vh - 64px); padding: 2rem 1rem;">
     <MudText Typo="Typo.h4" Align="Align.Center" Class="mb-2 font-weight-bold">
         @GetHeaderTitle()
@@ -315,9 +317,6 @@
 
         user.PhoneNumberConfirmed = true;
         await UserManager.UpdateAsync(user);
-
-        // FIX: Instead of SignInManager.SignInAsync, go to the bridge
-        // forceLoad: true is the most important part!
         Navigation.NavigateTo($"/auth/login-bridge?userId={user.Id}", forceLoad: true);
     }
     private async Task LoginWithEmail()
@@ -325,60 +324,15 @@
         var user = await UserManager.FindByEmailAsync(Input.Email);
         if (user != null && await UserManager.CheckPasswordAsync(user, Input.Password))
         {
-            // FIX: Same here for email login
-            Navigation.NavigateTo($"/account/login-bridge?userId={user.Id}", forceLoad: true);
+           
+            Navigation.NavigateTo($"/auth/login-bridge?userId={user.Id}", forceLoad: true);
         }
         else
         {
             Snackbar.Add("Invalid email or password", Severity.Error);
         }
     }
-    // private async Task HandleOtpVerification(string otp)
-    // {
-    //     await Task.Delay(2000);
-
-    //     var user = await UserManager.FindByNameAsync(Input.PhoneNumber);
-
-    //     if (user == null)
-    //     {
-    //         user = new ApplicationUser
-    //         {
-    //             UserName = Input.PhoneNumber,
-    //             PhoneNumber = Input.PhoneNumber
-    //         };
-    //         var createResult = await UserManager.CreateAsync(user);
-    //         if (!createResult.Succeeded)
-    //         {
-    //             throw new Exception("Registration failed");
-    //         }
-    //     }
-
-    //     user.PhoneNumberConfirmed = true;
-    //     await UserManager.UpdateAsync(user);
-
-    //     await SignInManager.SignInAsync(user, isPersistent: false);
-    //     Navigation.NavigateTo("/dashboard");
-    // }
-
-    // private async Task LoginWithEmail()
-    // {
-    //     if (string.IsNullOrWhiteSpace(Input.Email) || string.IsNullOrWhiteSpace(Input.Password))
-    //     {
-    //         Snackbar.Add("Please enter email and password", Severity.Error);
-    //         return;
-    //     }
-
-    //     var result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, isPersistent: false, lockoutOnFailure: false);
-
-    //     if (result.Succeeded)
-    //     {
-    //         Navigation.NavigateTo("/dashboard");
-    //     }
-    //     else
-    //     {
-    //         Snackbar.Add("Invalid email or password", Severity.Error);
-    //     }
-    // }
+   
 
     private async Task RegisterWithEmail()
     {

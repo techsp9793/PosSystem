@@ -1,0 +1,253 @@
+﻿@page "/admin/roles"
+@using Microsoft.AspNetCore.Identity
+@using PosSystem.Data.Entities
+@using System.Security.Claims
+@using Microsoft.EntityFrameworkCore
+@using PosSystem.Data
+@using PosSystem.Services
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Components.Pages.Roles
+
+@attribute [Authorize(Policy = "Permissions.Users.View")]
+@inject IServiceScopeFactory ScopeFactory
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>Role Management</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="mt-4">
+    <div class="d-flex justify-space-between align-center mb-4">
+        <MudText Typo="Typo.h5">
+            @(string.IsNullOrEmpty(currentTenantId) ? "System Roles (Super Admin)" : "Staff Roles")
+        </MudText>
+
+        @* --- CREATE PERMISSION CHECK --- *@
+        <AuthorizeView Policy="Permissions.Users.Create">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="CreateAsync">Create Role</MudButton>
+        </AuthorizeView>
+    </div>
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        @* Renamed Context to "role" to avoid conflict with AuthorizeView *@
+        <MudTable Items="@roles" Hover="true" Striped="true" Context="role">
+            <HeaderContent>
+                <MudTh>Role Name</MudTh>
+                <MudTh>Description</MudTh>
+
+                @* Show Actions header only if user can edit or delete *@
+                <AuthorizeView Policy="Permissions.Users.Edit" Context="authContext">
+                    <Authorized>
+                        <MudTh>Actions</MudTh>
+                    </Authorized>
+                    <NotAuthorized>
+                        <AuthorizeView Policy="Permissions.Users.Delete" Context="deleteAuth">
+                            <Authorized>
+                                <MudTh>Actions</MudTh>
+                            </Authorized>
+                        </AuthorizeView>
+                    </NotAuthorized>
+                </AuthorizeView>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Name">@role.Name</MudTd>
+                <MudTd DataLabel="Description">@role.Description</MudTd>
+                <MudTd>
+                    @* --- EDIT PERMISSION CHECK --- *@
+                    <AuthorizeView Policy="Permissions.Users.Edit">
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                       Color="Color.Primary"
+                                       OnClick="@(() => EditAsync(role))" />
+                    </AuthorizeView>
+
+                    @* --- DELETE PERMISSION CHECK --- *@
+                    <AuthorizeView Policy="Permissions.Users.Delete">
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                       Color="Color.Error"
+                                       OnClick="@(() => DeleteAsync(role))" />
+                    </AuthorizeView>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudContainer>
+
+@code {
+    private List<ApplicationRole> roles = new();
+    private string? currentTenantId;
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        currentTenantId = authState.User.FindFirst("tenant_id")?.Value;
+        if (string.IsNullOrWhiteSpace(currentTenantId)) currentTenantId = null;
+
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        using var scope = ScopeFactory.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        roles = await context.Roles
+            .IgnoreQueryFilters()
+            .Where(r => r.TenantId == currentTenantId)
+            .AsNoTracking()
+            .ToListAsync();
+
+        isLoading = false;
+    }
+
+    private async Task CreateAsync()
+    {
+        var newRole = new ApplicationRole
+        {
+            Id = string.Empty,
+            TenantId = currentTenantId,
+            Name = string.Empty,
+            Description = string.Empty
+        };
+        await ShowDialog(newRole, "Create Role");
+    }
+
+    private async Task EditAsync(ApplicationRole role)
+    {
+        await ShowDialog(role, "Edit Role");
+    }
+
+    private async Task ShowDialog(ApplicationRole role, string title)
+    {
+        var modelCopy = new ApplicationRole
+        {
+            Id = role.Id ?? string.Empty,
+            Name = role.Name,
+            Description = role.Description,
+            TenantId = currentTenantId
+        };
+
+        // Corrected DialogParameters syntax
+        var parameters = new DialogParameters { ["Model"] = modelCopy };
+
+        var dialog = await DialogService.ShowAsync<RoleDialog>(title, parameters);
+        var result = await dialog.Result;
+
+        if (!result.Canceled && result.Data != null)
+        {
+            dynamic data = result.Data;
+            ApplicationRole resultRole = data.Role;
+            HashSet<string> perms = data.Permissions;
+
+            try
+            {
+                using var scope = ScopeFactory.CreateScope();
+                var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+                ApplicationRole dbRole = null;
+                bool isNewRole = string.IsNullOrEmpty(resultRole.Id);
+
+                if (isNewRole)
+                {
+                    dbRole = new ApplicationRole
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        Name = resultRole.Name,
+                        NormalizedName = resultRole.Name?.ToUpper(),
+                        Description = resultRole.Description,
+                        TenantId = currentTenantId,
+                        ConcurrencyStamp = Guid.NewGuid().ToString()
+                    };
+                    context.Roles.Add(dbRole);
+                    await context.SaveChangesAsync();
+                }
+                else
+                {
+                    dbRole = await context.Roles
+                        .IgnoreQueryFilters()
+                        .FirstOrDefaultAsync(r => r.Id == resultRole.Id);
+
+                    if (dbRole == null)
+                    {
+                        Snackbar.Add("Role not found. The list has been refreshed.", Severity.Warning);
+                        await LoadDataAsync();
+                        return;
+                    }
+
+                    dbRole.Name = resultRole.Name;
+                    dbRole.NormalizedName = resultRole.Name?.ToUpper();
+                    dbRole.Description = resultRole.Description;
+                    await context.SaveChangesAsync();
+                }
+
+                var oldClaims = await context.RoleClaims
+                    .Where(rc => rc.RoleId == dbRole.Id && rc.ClaimType == "Permission")
+                    .ToListAsync();
+                context.RoleClaims.RemoveRange(oldClaims);
+
+                foreach (var permCode in perms)
+                {
+                    context.RoleClaims.Add(new IdentityRoleClaim<string>
+                    {
+                        RoleId = dbRole.Id,
+                        ClaimType = "Permission",
+                        ClaimValue = permCode
+                    });
+                }
+                await context.SaveChangesAsync();
+
+                Snackbar.Add(isNewRole ? "Role created successfully!" : "Role updated successfully!", Severity.Success);
+                await LoadDataAsync();
+            }
+            catch (Exception ex)
+            {
+                Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+            }
+        }
+    }
+
+    private async Task DeleteAsync(ApplicationRole role)
+    {
+        var confirm = await DialogService.ShowMessageBox(
+            "Warning",
+            $"Delete role '{role.Name}'? This action cannot be undone.",
+            yesText: "Delete",
+            cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            try
+            {
+                using var scope = ScopeFactory.CreateScope();
+                var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+                var roleToDelete = await context.Roles
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(r => r.Id == role.Id);
+
+                if (roleToDelete != null)
+                {
+                    context.Roles.Remove(roleToDelete);
+                    await context.SaveChangesAsync();
+                    Snackbar.Add("Role deleted successfully!", Severity.Success);
+                    await LoadDataAsync();
+                }
+                else
+                {
+                    Snackbar.Add("Role not found.", Severity.Warning);
+                    await LoadDataAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                Snackbar.Add($"Error deleting role: {ex.Message}", Severity.Error);
+            }
+        }
+    }
+}

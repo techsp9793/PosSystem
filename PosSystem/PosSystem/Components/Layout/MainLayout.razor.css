@@ -1,0 +1,21 @@
+﻿/* Force the drawer's inner container to take full height */
+::deep .mud-drawer-content {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    overflow-y: hidden; /* Prevents double scrollbars */
+}
+
+/* Ensure the nav menu inside fills the space so mt-auto works */
+::deep .mud-nav-menu {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+}
+
+/* Fix alignment for Mini variant icons */
+::deep .mud-drawer-mini .mud-nav-link {
+    justify-content: center !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}

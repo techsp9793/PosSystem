@@ -1,0 +1,253 @@
+﻿@page "/user/profile"
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@using PosSystem.Data
+@using System.IO
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components.Web
+
+@inject UserManager<ApplicationUser> UserManager
+@inject SignInManager<ApplicationUser> SignInManager
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject IWebHostEnvironment Environment
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+@* Enable Interactivity for Tabs/Forms/Uploads *@
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+
+<PageTitle>My Profile</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="mt-4">
+    <MudText Typo="Typo.h4" GutterBottom="true" Class="mb-6">Account Settings</MudText>
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+    }
+    else
+    {
+        <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
+
+            <MudTabPanel Text="Profile Details" Icon="@Icons.Material.Filled.Person">
+                <EditForm Model="Input" OnValidSubmit="UpdateProfileAsync" FormName="profile-form">
+                    <DataAnnotationsValidator />
+
+                    <MudGrid>
+                        <MudItem xs="12" sm="4" Class="d-flex flex-column align-center justify-center">
+                            <MudAvatar Style="height:120px; width:120px; font-size:3rem;" Color="Color.Primary" Class="mb-4">
+                                @if (!string.IsNullOrEmpty(AvatarUrl))
+                                {
+                                    <MudImage Src="@AvatarUrl" ObjectFit="ObjectFit.Cover" Style="height:100%; width:100%;" />
+                                }
+                                else
+                                {
+                                    @username?.FirstOrDefault().ToString().ToUpper()
+                                }
+                            </MudAvatar>
+
+                            <MudFileUpload T="IBrowserFile" FilesChanged="UploadFile">
+                                <ActivatorContent>
+                                    <MudButton Variant="Variant.Outlined"
+                                               StartIcon="@Icons.Material.Filled.CloudUpload"
+                                               Color="Color.Primary">
+                                        Change Photo
+                                    </MudButton>
+                                </ActivatorContent>
+                            </MudFileUpload>
+                        </MudItem>
+
+                        <MudItem xs="12" sm="8">
+                            <MudStack Spacing="3">
+                                <MudTextField @bind-Value="username" Label="Username" Variant="Variant.Outlined" ReadOnly="true" Disabled="true" />
+
+                                <MudTextField @bind-Value="Input.PhoneNumber"
+                                              Label="Phone Number"
+                                              Variant="Variant.Outlined"
+                                              HelperText="Visible to other admins" />
+                                <ValidationMessage For="() => Input.PhoneNumber" />
+
+                                <MudButton ButtonType="ButtonType.Submit"
+                                           Variant="Variant.Filled"
+                                           Color="Color.Primary"
+                                           Class="mt-2"
+                                           Size="Size.Large">
+                                    Save Profile
+                                </MudButton>
+                            </MudStack>
+                        </MudItem>
+                    </MudGrid>
+                </EditForm>
+            </MudTabPanel>
+
+            <MudTabPanel Text="Security" Icon="@Icons.Material.Filled.Lock">
+                <EditForm Model="PasswordInput" OnValidSubmit="ChangePasswordAsync" FormName="password-form">
+                    <DataAnnotationsValidator />
+
+                    <MudStack Spacing="3" Style="max-width: 500px;">
+                        <MudTextField @bind-Value="PasswordInput.OldPassword"
+                                      Label="Current Password"
+                                      InputType="InputType.Password"
+                                      Variant="Variant.Outlined" />
+                        <ValidationMessage For="() => PasswordInput.OldPassword" />
+
+                        <MudTextField @bind-Value="PasswordInput.NewPassword"
+                                      Label="New Password"
+                                      InputType="InputType.Password"
+                                      Variant="Variant.Outlined" />
+                        <ValidationMessage For="() => PasswordInput.NewPassword" />
+
+                        <MudTextField @bind-Value="PasswordInput.ConfirmPassword"
+                                      Label="Confirm New Password"
+                                      InputType="InputType.Password"
+                                      Variant="Variant.Outlined" />
+                        <ValidationMessage For="() => PasswordInput.ConfirmPassword" />
+
+                        <MudButton ButtonType="ButtonType.Submit"
+                                   Variant="Variant.Filled"
+                                   Color="Color.Error">
+                            Change Password
+                        </MudButton>
+                    </MudStack>
+                </EditForm>
+            </MudTabPanel>
+
+        </MudTabs>
+    }
+</MudContainer>
+
+@code {
+    private ApplicationUser? user;
+    private string? username;
+    private string? AvatarUrl;
+    private bool isLoading = true;
+
+    [SupplyParameterFromForm] private ProfileInputModel Input { get; set; } = new();
+    [SupplyParameterFromForm] private PasswordModel PasswordInput { get; set; } = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var principal = authState.User;
+
+        if (principal.Identity?.IsAuthenticated == true)
+        {
+            user = await UserManager.GetUserAsync(principal);
+            if (user != null)
+            {
+                username = user.UserName;
+                Input.PhoneNumber = user.PhoneNumber;
+                AvatarUrl = user.ProfilePictureUrl;
+            }
+        }
+        isLoading = false;
+    }
+
+    // --- 1. UPLOAD LOGIC ---
+    private async Task UploadFile(IBrowserFile file)
+    {
+        if (user == null || file == null) return;
+
+        try
+        {
+            // A. Create folder: wwwroot/uploads/profiles
+            var folderPath = Path.Combine(Environment.WebRootPath, "uploads", "profiles");
+            if (!Directory.Exists(folderPath)) Directory.CreateDirectory(folderPath);
+
+            // B. Unique Name: user_timestamp.jpg
+            var fileName = $"{user.Id}_{DateTime.Now.Ticks}{Path.GetExtension(file.Name)}";
+            var diskPath = Path.Combine(folderPath, fileName);
+
+            // C. Save to Disk
+            await using (var stream = new FileStream(diskPath, FileMode.Create))
+            {
+                await file.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024).CopyToAsync(stream);
+            }
+
+            // D. Save URL to Database
+            user.ProfilePictureUrl = $"/uploads/profiles/{fileName}";
+            await UserManager.UpdateAsync(user);
+
+            // E. Refresh UI
+            AvatarUrl = user.ProfilePictureUrl;
+            Snackbar.Add("Profile picture updated!", Severity.Success);
+            await Task.Delay(2000);
+            // // F. Refresh Cookie (so the image appears in the Top Bar immediately)
+            // await SignInManager.RefreshSignInAsync(user);
+            Navigation.Refresh(true);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Upload failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+   
+    // --- 2. UPDATE INFO LOGIC ---
+    private async Task UpdateProfileAsync()
+    {
+        if (user == null) return;
+
+        if (Input.PhoneNumber != user.PhoneNumber)
+        {
+            var result = await UserManager.SetPhoneNumberAsync(user, Input.PhoneNumber);
+            if (!result.Succeeded)
+            {
+                Snackbar.Add("Error updating phone number.", Severity.Error);
+                return;
+            }
+
+            // Remove RefreshSignInAsync. Use Navigation.Refresh(true) instead.
+            // await SignInManager.RefreshSignInAsync(user); <--- DELETE THIS
+
+            Snackbar.Add("Profile updated successfully.", Severity.Success);
+
+            // Force reload to update the User Context
+            Navigation.Refresh(true);
+        }
+    }
+    
+    private async Task ChangePasswordAsync()
+    {
+        if (user == null) return;
+
+        var result = await UserManager.ChangePasswordAsync(user, PasswordInput.OldPassword, PasswordInput.NewPassword);
+
+        if (result.Succeeded)
+        {
+            // Remove RefreshSignInAsync here too.
+            // await SignInManager.RefreshSignInAsync(user); <--- DELETE THIS
+
+            Snackbar.Add("Password changed successfully!", Severity.Success);
+            PasswordInput = new(); // Clear form
+
+            // Force reload to update security stamp/cookies
+            Navigation.Refresh(true);
+        }
+        else
+        {
+            foreach (var error in result.Errors)
+            {
+                Snackbar.Add(error.Description, Severity.Error);
+            }
+        }
+    }
+    public class ProfileInputModel
+    {
+        [Phone]
+        public string? PhoneNumber { get; set; }
+    }
+
+    public class PasswordModel
+    {
+        [Required]
+        public string OldPassword { get; set; } = "";
+
+        [Required]
+        [StringLength(100, MinimumLength = 6)]
+        public string NewPassword { get; set; } = "";
+
+        [Compare("NewPassword", ErrorMessage = "Passwords do not match.")]
+        public string ConfirmPassword { get; set; } = "";
+    }
+}
