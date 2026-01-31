@@ -1,0 +1,146 @@
+﻿@page "/catalog/categories"
+@using PosSystem.Data.Entities
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Services
+
+@attribute [Authorize(Policy = "Permissions.Categories.View")]
+
+@inject IUnitOfWork UnitOfWork
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject TerminologyService Terminology
+@inject ITenantService TenantService
+
+<PageTitle>@Terminology.GetText("Label_Category", "Category") Management</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <div class="d-flex justify-space-between align-center mb-4">
+        @* Dynamic Header *@
+        <MudText Typo="Typo.h5">
+            Manage @Terminology.GetText("Label_Category", "Categories")
+        </MudText>
+
+        <AuthorizeView Policy="Permissions.Categories.Create">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="CreateAsync">
+                Add New @Terminology.GetText("Label_Category", "Category")
+            </MudButton>
+        </AuthorizeView>
+    </div>
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        <MudTable Items="@categories" Hover="true" Striped="true" Elevation="2" Context="cat">
+            <HeaderContent>
+                <MudTh>Color</MudTh>
+                <MudTh>Name</MudTh>
+                <MudTh>Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>
+                    <MudIcon Icon="@Icons.Material.Filled.Circle" Style="@($"color:{cat.ColorCode};")" />
+                </MudTd>
+                <MudTd DataLabel="Name">
+                    <MudText Typo="Typo.body1" Style="font-weight:500;">@cat.Name</MudText>
+                </MudTd>
+                <MudTd>
+                    <AuthorizeView Policy="Permissions.Categories.Edit">
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small" OnClick="@(() => EditAsync(cat))" />
+                    </AuthorizeView>
+                    <AuthorizeView Policy="Permissions.Categories.Delete">
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="@(() => DeleteAsync(cat))" />
+                    </AuthorizeView>
+                </MudTd>
+            </RowTemplate>
+            <PagerContent>
+                <MudTablePager />
+            </PagerContent>
+        </MudTable>
+    }
+</MudContainer>
+
+@code {
+    private IEnumerable<ItemCategory> categories = new List<ItemCategory>();
+    private bool isLoading = true;
+    private string currentTenantId = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentTenantId = TenantService.GetTenantId();
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        // The Global Query Filter in DbContext automatically filters by TenantId
+        // Assuming your UnitOfWork.Categories is a generic repository for ItemCategory
+        categories = await UnitOfWork.Categories.GetAllAsync();
+        isLoading = false;
+    }
+
+    private async Task CreateAsync()
+    {
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+
+        // Pass a new object with the current TenantId
+        var newCat = new ItemCategory { TenantId = currentTenantId, ColorCode = "#2196F3" };
+
+        var parameters = new DialogParameters { ["Model"] = newCat };
+
+        var dialog = await DialogService.ShowAsync<CategoryDialog>($"Add {Terminology.GetText("Label_Category")}", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled && result.Data is ItemCategory data)
+        {
+            data.Id = Guid.NewGuid().ToString(); // Ensure GUID
+            data.TenantId = currentTenantId;     // Ensure Security
+
+            await UnitOfWork.Categories.AddAsync(data);
+            await UnitOfWork.CompleteAsync();
+
+            Snackbar.Add($"{Terminology.GetText("Label_Category")} added!", Severity.Success);
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task EditAsync(ItemCategory cat)
+    {
+        var parameters = new DialogParameters { ["Model"] = cat };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+
+        var dialog = await DialogService.ShowAsync<CategoryDialog>($"Edit {Terminology.GetText("Label_Category")}", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled)
+        {
+            UnitOfWork.Categories.Update(cat);
+            await UnitOfWork.CompleteAsync();
+
+            Snackbar.Add("Updated successfully!", Severity.Success);
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task DeleteAsync(ItemCategory cat)
+    {
+        var term = Terminology.GetText("Label_Category");
+        bool? confirm = await DialogService.ShowMessageBox("Warning", $"Delete this {term}? Items inside it may become uncategorized.", yesText: "Delete", cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            UnitOfWork.Categories.Remove(cat);
+            await UnitOfWork.CompleteAsync();
+
+            Snackbar.Add("Deleted!", Severity.Warning);
+            await LoadDataAsync();
+        }
+    }
+}

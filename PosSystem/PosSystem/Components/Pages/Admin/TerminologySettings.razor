@@ -1,0 +1,227 @@
+﻿@page "/admin/settings/terminology"
+@using PosSystem.Data.Entities
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.EntityFrameworkCore
+@using PosSystem.Data
+@using PosSystem.Services
+@using Microsoft.AspNetCore.Authorization
+
+@attribute [Authorize(Policy = "Permissions.Terminology.View")]
+
+@inject IUnitOfWork UnitOfWork
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject ITenantService TenantService
+@inject TerminologyService TerminologyService
+@inject ISnackbar Snackbar
+
+<PageTitle>Terminology Settings</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
+    <MudText Typo="Typo.h5" Class="mb-4">Dynamic Terminology</MudText>
+
+    @* --- SUPER ADMIN SELECTOR --- *@
+    @if (IsGlobalAdmin)
+    {
+        <MudPaper Class="pa-4 mb-4" Elevation="3" Style="background-color: var(--mud-palette-background-grey);">
+            <MudText Typo="Typo.subtitle2" Color="Color.Primary" Class="mb-2"><b>Super Admin Mode:</b> Select a Tenant to configure</MudText>
+            <MudSelect T="string" Label="Select Tenant" Value="CurrentTenantId" ValueChanged="OnTenantSelected" Variant="Variant.Outlined" AnchorOrigin="Origin.BottomCenter">
+                @foreach (var tenant in AllTenants)
+                {
+                    <MudSelectItem Value="@tenant.Id">@tenant.Name (@tenant.PlanType)</MudSelectItem>
+                }
+            </MudSelect>
+        </MudPaper>
+    }
+
+    @* --- LOADING STATE --- *@
+    @if (isLoading)
+    {
+        <div class="d-flex justify-center my-4">
+            <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+        </div>
+    }
+    @* --- EDIT FORM --- *@
+    else if (!string.IsNullOrEmpty(CurrentTenantId))
+    {
+        <MudText Typo="Typo.body2" Class="mb-6 text-muted">
+            Customize how items are labeled for <b>@GetTenantName(CurrentTenantId)</b>.
+        </MudText>
+
+        <MudPaper Elevation="2" Class="pa-4">
+            <MudForm @ref="form">
+                <MudGrid>
+                    @foreach (var term in TermsList)
+                    {
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="term.TermValue"
+                                          Label="@GetFriendlyName(term.TermKey)"
+                                          HelperText="@($"System Key: {term.TermKey}")"
+                                          Variant="Variant.Outlined"
+                                          Required="true" />
+                        </MudItem>
+                    }
+
+                    <MudItem xs="12" Class="d-flex justify-end mt-4">
+                        <AuthorizeView Policy="Permissions.Terminology.Edit">
+                            <MudButton Variant="Variant.Filled"
+                                       Color="Color.Primary"
+                                       OnClick="SaveAsync"
+                                       StartIcon="@Icons.Material.Filled.Save">
+                                Save Configuration
+                            </MudButton>
+                        </AuthorizeView>
+                    </MudItem>
+                </MudGrid>
+            </MudForm>
+        </MudPaper>
+    }
+    else if (!IsGlobalAdmin)
+    {
+        <MudAlert Severity="Severity.Error">Unable to determine your Tenant Context.</MudAlert>
+    }
+</MudContainer>
+
+@code {
+    private bool isLoading = false;
+    private MudForm form = default!;
+    private List<TenantTerminology> TermsList = new();
+
+    // State
+    private string CurrentTenantId = "";
+    private bool IsGlobalAdmin = false;
+    private List<Tenant> AllTenants = new();
+
+    private readonly Dictionary<string, string> KnownKeys = new()
+    {
+        { "Label_Product", "Singular Item Name (e.g. Ticket, Dish)" },
+        { "Label_Category", "Category Group Name (e.g. Zone, Menu)" },
+
+        // [NEW] Added Currency Symbol
+        { "CurrencySymbol", "Currency Symbol (e.g. $, ₹, €)" }
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        // 1. Determine Identity
+        var myTenantId = TenantService.GetTenantId();
+
+        if (string.IsNullOrEmpty(myTenantId))
+        {
+            // I am a Super Admin
+            IsGlobalAdmin = true;
+            AllTenants = (await UnitOfWork.Tenants.GetAllAsync()).ToList();
+        }
+        else
+        {
+            // I am a Normal Tenant Admin
+            CurrentTenantId = myTenantId;
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task OnTenantSelected(string tenantId)
+    {
+        CurrentTenantId = tenantId;
+        await LoadDataAsync();
+    }
+
+    private string GetTenantName(string id)
+    {
+        return AllTenants.FirstOrDefault(t => t.Id == id)?.Name ?? "Current Tenant";
+    }
+
+    private async Task LoadDataAsync()
+    {
+        if (string.IsNullOrEmpty(CurrentTenantId)) return;
+
+        isLoading = true;
+        try
+        {
+            using var context = await DbFactory.CreateDbContextAsync();
+
+            var existing = await context.TenantTerminologies
+                .Where(t => t.TenantId == CurrentTenantId)
+                .ToListAsync();
+
+            TermsList = new List<TenantTerminology>();
+
+            foreach (var key in KnownKeys)
+            {
+                var found = existing.FirstOrDefault(x => x.TermKey == key.Key);
+                if (found != null)
+                {
+                    TermsList.Add(found);
+                }
+                else
+                {
+                    // [NEW] Default Values Logic
+                    string defaultValue = key.Key switch
+                    {
+                        "Label_Product" => "Product",
+                        "Label_Category" => "Category",
+                        "CurrencySymbol" => "$", // Default currency
+                        _ => ""
+                    };
+
+                    TermsList.Add(new TenantTerminology
+                    {
+                        TenantId = CurrentTenantId,
+                        TermKey = key.Key,
+                        TermValue = defaultValue
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading data: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private string GetFriendlyName(string key)
+    {
+        return KnownKeys.ContainsKey(key) ? KnownKeys[key] : key;
+    }
+
+    private async Task SaveAsync()
+    {
+        await form.Validate();
+        if (form.IsValid)
+        {
+            try
+            {
+                using var context = await DbFactory.CreateDbContextAsync();
+
+                foreach (var term in TermsList)
+                {
+                    term.TenantId = CurrentTenantId;
+
+                    var exists = await context.TenantTerminologies
+                        .AnyAsync(t => t.TenantId == CurrentTenantId && t.TermKey == term.TermKey);
+
+                    if (exists)
+                        context.TenantTerminologies.Update(term);
+                    else
+                        context.TenantTerminologies.Add(term);
+                }
+
+                await context.SaveChangesAsync();
+
+                if (CurrentTenantId == TenantService.GetTenantId())
+                {
+                    await TerminologyService.LoadTermsAsync(CurrentTenantId);
+                }
+
+                Snackbar.Add("Terminology updated successfully!", Severity.Success);
+            }
+            catch (Exception ex)
+            {
+                Snackbar.Add($"Error saving: {ex.Message}", Severity.Error);
+            }
+        }
+    }
+}

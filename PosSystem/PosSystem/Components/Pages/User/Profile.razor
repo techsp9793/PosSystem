@@ -1,10 +1,12 @@
 ﻿@page "/user/profile"
 @using System.ComponentModel.DataAnnotations
+@using System.Security.Claims
 @using Microsoft.AspNetCore.Identity
 @using PosSystem.Data
 @using System.IO
 @using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.AspNetCore.Components.Web
+@using Microsoft.EntityFrameworkCore
 
 @inject UserManager<ApplicationUser> UserManager
 @inject SignInManager<ApplicationUser> SignInManager
@@ -12,8 +14,8 @@
 @inject IWebHostEnvironment Environment
 @inject ISnackbar Snackbar
 @inject NavigationManager Navigation
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
 
-@* Enable Interactivity for Tabs/Forms/Uploads *@
 @rendermode @(new InteractiveServerRenderMode(prerender: false))
 
 <PageTitle>My Profile</PageTitle>
@@ -117,14 +119,15 @@
 </MudContainer>
 
 @code {
-    private ApplicationUser? user;
+    private string? currentUserId;
     private string? username;
     private string? AvatarUrl;
     private bool isLoading = true;
 
-    [SupplyParameterFromForm] private ProfileInputModel Input { get; set; } = new();
-    [SupplyParameterFromForm] private PasswordModel PasswordInput { get; set; } = new();
+    private ProfileInputModel Input { get; set; } = new();
+    private PasswordModel PasswordInput { get; set; } = new();
 
+    // --- 1. SAFE LOAD (Uses Factory) ---
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
@@ -132,48 +135,56 @@
 
         if (principal.Identity?.IsAuthenticated == true)
         {
-            user = await UserManager.GetUserAsync(principal);
-            if (user != null)
+            currentUserId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            // FIX: Use Factory to read data. This prevents collision with MainLayout.
+            using var context = await DbFactory.CreateDbContextAsync();
+            var dbUser = await context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == currentUserId);
+
+            if (dbUser != null)
             {
-                username = user.UserName;
-                Input.PhoneNumber = user.PhoneNumber;
-                AvatarUrl = user.ProfilePictureUrl;
+                username = dbUser.UserName;
+                Input.PhoneNumber = dbUser.PhoneNumber;
+                AvatarUrl = dbUser.ProfilePictureUrl;
             }
         }
         isLoading = false;
     }
 
-    // --- 1. UPLOAD LOGIC ---
+    // --- 2. UPLOAD LOGIC ---
     private async Task UploadFile(IBrowserFile file)
     {
-        if (user == null || file == null) return;
+        if (string.IsNullOrEmpty(currentUserId) || file == null) return;
 
         try
         {
-            // A. Create folder: wwwroot/uploads/profiles
             var folderPath = Path.Combine(Environment.WebRootPath, "uploads", "profiles");
             if (!Directory.Exists(folderPath)) Directory.CreateDirectory(folderPath);
 
-            // B. Unique Name: user_timestamp.jpg
-            var fileName = $"{user.Id}_{DateTime.Now.Ticks}{Path.GetExtension(file.Name)}";
+            var fileName = $"{currentUserId}_{DateTime.Now.Ticks}{Path.GetExtension(file.Name)}";
             var diskPath = Path.Combine(folderPath, fileName);
+            var webPath = $"/uploads/profiles/{fileName}";
 
-            // C. Save to Disk
             await using (var stream = new FileStream(diskPath, FileMode.Create))
             {
                 await file.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024).CopyToAsync(stream);
             }
 
-            // D. Save URL to Database
-            user.ProfilePictureUrl = $"/uploads/profiles/{fileName}";
-            await UserManager.UpdateAsync(user);
+            // Safe DB Update
+            using (var context = await DbFactory.CreateDbContextAsync())
+            {
+                var dbUser = await context.Users.FindAsync(currentUserId);
+                if (dbUser != null)
+                {
+                    dbUser.ProfilePictureUrl = webPath;
+                    await context.SaveChangesAsync();
+                }
+            }
 
-            // E. Refresh UI
-            AvatarUrl = user.ProfilePictureUrl;
+            AvatarUrl = webPath;
             Snackbar.Add("Profile picture updated!", Severity.Success);
-            await Task.Delay(2000);
-            // // F. Refresh Cookie (so the image appears in the Top Bar immediately)
-            // await SignInManager.RefreshSignInAsync(user);
+
+            await Task.Delay(1000);
             Navigation.Refresh(true);
         }
         catch (Exception ex)
@@ -182,11 +193,20 @@
         }
     }
 
-   
-    // --- 2. UPDATE INFO LOGIC ---
+    // --- 3. SAFE UPDATE LOGIC ---
     private async Task UpdateProfileAsync()
     {
-        if (user == null) return;
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+
+        // FIX: Re-fetch the user here (MainLayout is done loading, so this is safe now)
+        // We use UserManager here because SetPhoneNumberAsync requires a tracked entity
+        var user = await UserManager.GetUserAsync(authState.User);
+
+        if (user == null)
+        {
+            Snackbar.Add("Session expired.", Severity.Error);
+            return;
+        }
 
         if (Input.PhoneNumber != user.PhoneNumber)
         {
@@ -196,32 +216,29 @@
                 Snackbar.Add("Error updating phone number.", Severity.Error);
                 return;
             }
-
-            // Remove RefreshSignInAsync. Use Navigation.Refresh(true) instead.
-            // await SignInManager.RefreshSignInAsync(user); <--- DELETE THIS
-
             Snackbar.Add("Profile updated successfully.", Severity.Success);
-
-            // Force reload to update the User Context
             Navigation.Refresh(true);
         }
+        else
+        {
+            Snackbar.Add("No changes detected.", Severity.Info);
+        }
     }
-    
+
+    // --- 4. SAFE PASSWORD CHANGE ---
     private async Task ChangePasswordAsync()
     {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var user = await UserManager.GetUserAsync(authState.User);
+
         if (user == null) return;
 
         var result = await UserManager.ChangePasswordAsync(user, PasswordInput.OldPassword, PasswordInput.NewPassword);
 
         if (result.Succeeded)
         {
-            // Remove RefreshSignInAsync here too.
-            // await SignInManager.RefreshSignInAsync(user); <--- DELETE THIS
-
             Snackbar.Add("Password changed successfully!", Severity.Success);
-            PasswordInput = new(); // Clear form
-
-            // Force reload to update security stamp/cookies
+            PasswordInput = new();
             Navigation.Refresh(true);
         }
         else
@@ -232,9 +249,10 @@
             }
         }
     }
+
     public class ProfileInputModel
     {
-        [Phone]
+        [Phone(ErrorMessage = "Invalid phone number format.")]
         public string? PhoneNumber { get; set; }
     }
 

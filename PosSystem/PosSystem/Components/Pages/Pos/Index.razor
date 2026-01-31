@@ -1,0 +1,649 @@
+﻿@page "/pos"
+@layout PosSystem.Components.Layout.PosLayout
+@rendermode InteractiveServer
+
+@using PosSystem.Data
+@using PosSystem.Data.Entities
+@using PosSystem.Services
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.JSInterop
+
+@* [NEW] Inject StockService *@
+@inject PosSystem.Services.StockService StockService
+@inject PosSystem.Services.ReceiptService ReceiptPrinter
+
+@attribute [Authorize(Policy = "Permissions.Pos.Access")]
+
+@inject IUnitOfWork UnitOfWork
+@inject PosStateService PosState
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IJSRuntime JS
+@inject TerminologyService Terminology
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>POS - @(PosState.CurrentUnit?.Name)</PageTitle>
+
+@if (!PosState.IsUnitSelected)
+{
+    @* --- STATE A: SELECT LOCATION --- *@
+    <MudContainer MaxWidth="MaxWidth.Small" Class="mt-16 text-center">
+        <MudIcon Icon="@Icons.Material.Filled.Storefront" Size="Size.Large" Color="Color.Primary" Class="mb-4" />
+        <MudText Typo="Typo.h5">Select Location</MudText>
+        @if (isLoading)
+        {
+            <MudProgressCircular Indeterminate="true" Class="mt-4" />
+        }
+        else
+        {
+            <MudGrid Class="mt-4" Justify="Justify.Center">
+                @foreach (var unit in AvailableUnits)
+                {
+                    <MudItem xs="12">
+                        <MudButton Variant="Variant.Outlined" FullWidth="true" OnClick="() => SelectUnit(unit)">@unit.Name</MudButton>
+                    </MudItem>
+                }
+            </MudGrid>
+        }
+    </MudContainer>
+}
+else
+{
+    @* --- STATE B: PROFESSIONAL SALES INTERFACE --- *@
+    <MudGrid Class="h-100 pa-0 ma-0" Spacing="0">
+
+        @* 1. LEFT PANE: CATEGORIES *@
+        <MudItem xs="2" Class="d-flex flex-column border-end mud-theme-surface" Style="height: calc(100vh - 50px);">
+            <div class="pa-3 text-center border-bottom">
+                <MudText Typo="Typo.button" Color="Color.Primary"><b>CATEGORIES</b></MudText>
+            </div>
+            <div class="flex-grow-1 overflow-auto">
+                <MudList T="string" SelectedValue="SelectedCategory" Clickable="true" Dense="true" Class="py-0">
+                    <MudListItem Text="ALL ITEMS" OnClick="@(() => FilterCategory("All"))"
+                                 Class="@(SelectedCategory == "All" ? "bg-primary-light" : "")" />
+                    @foreach (var cat in Categories)
+                    {
+                        <MudListItem Text="@cat.Name" OnClick="@(() => FilterCategory(cat.Id))"
+                                     Class="@(SelectedCategory == cat.Id ? "bg-primary-light" : "")" />
+                    }
+                </MudList>
+            </div>
+
+            @* Offline/Sync Status Footer *@
+            <div class="pa-2 border-top text-center mud-theme-surface">
+                <MudChip T="string" Size="Size.Small" Color="@(SyncQueue.Any() ? Color.Warning : Color.Success)" Variant="Variant.Filled" Class="w-100">
+                    @(SyncQueue.Any() ? $"{SyncQueue.Count} Pending Sync" : "System Online")
+                </MudChip>
+            </div>
+        </MudItem>
+
+        @* 2. CENTER PANE: PRODUCT GRID *@
+        <MudItem xs="6" Class="d-flex flex-column mud-theme-background" Style="height: calc(100vh - 50px);">
+            @* Search Bar *@
+            <div class="pa-3 border-bottom d-flex gap-2 mud-theme-surface">
+                <MudTextField @bind-Value="SearchTerm" Placeholder="Search Product or SKU..."
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true"
+                              TextChanged="OnSearchChanged" />
+            </div>
+
+            @* Grid *@
+            <div class="flex-grow-1 overflow-auto pa-3">
+                <MudGrid Spacing="2">
+                    @foreach (var product in FilteredProducts)
+                    {
+                        <MudItem xs="4" sm="3">
+                            @{
+                                int stock = 0;
+                                bool isOutOfStock = false;
+
+                                // Only calculate stock logic if the item actually TRACKS stock
+                                if (product.TrackStock)
+                                {
+                                    stock = ProductStock.ContainsKey(product.Id) ? ProductStock[product.Id] : 0;
+                                    isOutOfStock = stock <= 0;
+                                }
+                            }
+
+                            <MudPaper Class="d-flex flex-column align-center justify-center cursor-pointer hover-effect pa-2 relative"
+                                      Elevation="1" Height="110px"
+                                      @onclick="() => AddToCart(product)"
+                                      Style="@(isOutOfStock ? "opacity:0.6; pointer-events:none;" : "")">
+
+                                @* 1. STOCK BADGE: Only show if TrackStock is TRUE *@
+                                @if (product.TrackStock)
+                                {
+                                    <MudChip T="string" Size="Size.Small"
+                                             Color="@(stock < 5 ? Color.Error : Color.Default)"
+                                             Variant="Variant.Filled"
+                                             Style="position:absolute; top:2px; right:2px; font-size:10px; height:18px;">
+                                        @stock
+                                    </MudChip>
+                                }
+                                @* 2. SERVICE BADGE: Optional, helps identify non-stock items *@
+                                else
+                                {
+                                    <MudIcon Icon="@Icons.Material.Filled.ConfirmationNumber"
+                                             Style="position:absolute; top:2px; right:2px; font-size:16px; opacity:0.5;" />
+                                }
+
+                                <MudText Typo="Typo.body2" Align="Align.Center" Style="font-weight:600; line-height:1.2; height: 35px; overflow:hidden;">
+                                    @product.Name
+                                </MudText>
+
+                                <MudText Typo="Typo.h6" Color="Color.Primary" Class="mt-1">
+                                    @(isOutOfStock ? "SOLD OUT" : $"{CurrencySymbol}{product.BasePrice:0.##}")
+                                </MudText>
+                            </MudPaper>
+                        </MudItem>
+                    }
+                </MudGrid>
+            </div>
+        </MudItem>
+
+        @* 3. RIGHT PANE: CART & CHECKOUT *@
+        <MudItem xs="4" Class="d-flex flex-column border-start shadow-lg mud-theme-surface" Style="height: calc(100vh - 50px); z-index: 10;">
+
+            @* Customer & Actions Header *@
+            <div class="pa-2 border-bottom d-flex align-center justify-space-between">
+                <div class="d-flex align-center cursor-pointer hover-bg rounded pa-1" @onclick="OpenCustomerDialog" style="flex:1;">
+                    <MudAvatar Color="Color.Primary" Size="Size.Small" Class="mr-2">
+                        @(string.IsNullOrEmpty(CurrentCustomerName) ? "?" : CurrentCustomerName.Substring(0, 1))
+                    </MudAvatar>
+                    <div style="line-height: 1.1;">
+                        <MudText Typo="Typo.subtitle2">@(CurrentCustomerName ?? "Walk-in Customer")</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@(CurrentCustomerPhone ?? "Click to add details")</MudText>
+                    </div>
+                </div>
+
+                <div class="d-flex gap-1">
+                    <MudTooltip Text="Park/Hold Order">
+                        <MudIconButton Icon="@Icons.Material.Filled.PauseCircle" Color="Color.Warning" OnClick="ParkOrder" Size="Size.Medium" Disabled="@(!CartItems.Any())" />
+                    </MudTooltip>
+                    @if (ParkedOrders.Any())
+                    {
+                        <MudBadge Content="@ParkedOrders.Count" Color="Color.Error" Overlap="true" Class="mx-2">
+                            <MudIconButton Icon="@Icons.Material.Filled.RestorePage" OnClick="ShowParkedOrders" Size="Size.Medium" />
+                        </MudBadge>
+                    }
+                </div>
+            </div>
+
+            @* Cart Items List *@
+            <div class="flex-grow-1 overflow-auto pa-0">
+                @if (!CartItems.Any())
+                {
+                    <div class="d-flex flex-column align-center justify-center h-100 text-muted">
+                        <MudIcon Icon="@Icons.Material.Filled.ShoppingCart" Size="Size.Large" Style="opacity:0.2; width: 80px; height: 80px;" />
+                        <MudText Class="mt-2">No Items Added</MudText>
+                    </div>
+                }
+                else
+                {
+                    <MudList T="CartItem" Dense="true" Class="px-2">
+                        @foreach (var item in CartItems)
+                        {
+                            <MudListItem Class="py-2 border-bottom-dashed">
+                                <div class="d-flex justify-space-between align-center w-100">
+                                    <div style="flex:1">
+                                        <MudText Typo="Typo.body2" Style="font-weight:600;">@item.ProductName</MudText>
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">@CurrencySymbol@item.UnitPrice x @item.Quantity</MudText>
+                                    </div>
+                                    <div class="d-flex align-center gap-1 mx-2">
+                                        <MudIconButton Icon="@Icons.Material.Filled.RemoveCircleOutline" Size="Size.Small" OnClick="@(() => UpdateQty(item, -1))" />
+                                        <MudText Typo="Typo.body1" Style="min-width: 20px; text-align:center;"><b>@item.Quantity</b></MudText>
+                                        <MudIconButton Icon="@Icons.Material.Filled.AddCircle" Size="Size.Small" Color="Color.Primary" OnClick="@(() => UpdateQty(item, 1))" />
+                                    </div>
+                                    <div class="text-end" style="min-width: 60px;">
+                                        <MudText Typo="Typo.body2"><b>@CurrencySymbol@((item.UnitPrice * item.Quantity).ToString("0.##"))</b></MudText>
+                                    </div>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" OnClick="@(() => RemoveItem(item))" />
+                                </div>
+                            </MudListItem>
+                        }
+                    </MudList>
+                }
+            </div>
+
+            @* Payment Footer *@
+            <div class="pa-3 border-top mud-theme-surface" style="box-shadow: 0 -2px 5px rgba(0,0,0,0.05);">
+                <div class="d-flex justify-space-between mb-1">
+                    <MudText Typo="Typo.body2">Subtotal</MudText>
+                    <MudText Typo="Typo.body2">@CurrencySymbol@CartTotal.ToString("N2")</MudText>
+                </div>
+                <div class="d-flex justify-space-between mb-1">
+                    <MudText Typo="Typo.body2">Tax</MudText>
+                    <MudText Typo="Typo.body2">@CurrencySymbol 0.00</MudText>
+                </div>
+                <MudDivider Class="my-2" />
+                <div class="d-flex justify-space-between mb-3">
+                    <MudText Typo="Typo.h6"><b>TOTAL</b></MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Success"><b>@CurrencySymbol@CartTotal.ToString("N2")</b></MudText>
+                </div>
+
+                <MudGrid Spacing="1">
+                    <MudItem xs="4">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Error" FullWidth="true" OnClick="ClearCart" Style="height:50px;">
+                            VOID
+                        </MudButton>
+                    </MudItem>
+                    <MudItem xs="8">
+                        <MudButton Variant="Variant.Filled" Color="Color.Success" FullWidth="true" Style="height:50px;"
+                                   OnClick="OpenPaymentDialog" Disabled="@(!CartItems.Any())">
+                            <MudIcon Icon="@Icons.Material.Filled.Payment" Class="mr-2" /> CHECKOUT
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+            </div>
+        </MudItem>
+    </MudGrid>
+
+    @* --- DIALOGS --- *@
+
+    @* Payment Dialog *@
+    <MudDialog @bind-Visible="isPaymentDialogVisible" Options="dialogOptions">
+        <DialogContent>
+            <MudText Typo="Typo.h5" Class="mb-4 text-center">Amount Due: <b>@CurrencySymbol@CartTotal.ToString("N2")</b></MudText>
+
+            <MudGrid>
+                <MudItem xs="6">
+                    <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-6 d-flex flex-column gap-2" OnClick="@(() => ProcessPayment("Cash"))">
+                        <MudIcon Icon="@Icons.Material.Filled.Money" Size="Size.Large" Color="Color.Success" />
+                        <MudText>CASH</MudText>
+                    </MudButton>
+                </MudItem>
+                <MudItem xs="6">
+                    <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-6 d-flex flex-column gap-2" OnClick="@(() => ProcessPayment("UPI"))">
+                        <MudIcon Icon="@Icons.Material.Filled.QrCode2" Size="Size.Large" Color="Color.Primary" />
+                        <MudText>UPI / QR</MudText>
+                    </MudButton>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-4 d-flex align-center justify-center gap-2" OnClick="@(() => ProcessPayment("Card"))">
+                        <MudIcon Icon="@Icons.Material.Filled.CreditCard" />
+                        <MudText>CREDIT / DEBIT CARD</MudText>
+                    </MudButton>
+                </MudItem>
+            </MudGrid>
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => isPaymentDialogVisible = false">Cancel</MudButton>
+        </DialogActions>
+    </MudDialog>
+
+    @* Customer Dialog *@
+    <MudDialog @bind-Visible="isCustomerDialogVisible">
+        <DialogContent>
+            <MudTextField @bind-Value="tempCustName" Label="Customer Name" Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Person" />
+            <MudTextField @bind-Value="tempCustPhone" Label="Phone Number" Variant="Variant.Outlined" Class="mt-2" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Phone" />
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="() => isCustomerDialogVisible = false">Cancel</MudButton>
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SaveCustomer">Set Customer</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
+<style>
+    /* Use theme variables so these change automatically in Dark Mode */
+    .hover-effect:active {
+        background-color: var(--mud-palette-action-default-hover);
+        transform: scale(0.98);
+        transition: 0.1s;
+    }
+
+    .hover-bg:hover {
+        background-color: var(--mud-palette-action-default-hover);
+    }
+
+    .bg-primary-light {
+        /* Use a transparent tint of the primary color. Works in both modes. */
+        background-color: rgba(var(--mud-palette-primary-rgb), 0.12);
+        color: var(--mud-palette-primary);
+        font-weight: bold;
+        border-right: 3px solid var(--mud-palette-primary);
+    }
+
+    .border-bottom-dashed {
+        border-bottom: 1px dashed var(--mud-palette-lines-default);
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private List<Unit> AvailableUnits = new();
+
+    // Data
+    private List<Product> AllProducts = new();
+    private List<Product> FilteredProducts = new();
+    private List<ItemCategory> Categories = new();
+    private List<CartItem> CartItems = new();
+
+    // Features
+    private List<Order> ParkedOrders = new();
+    private List<Order> SyncQueue = new();
+    private string SearchTerm = "";
+    private string SelectedCategory = "All";
+    private string CurrencySymbol = "$";
+
+    // Customer
+    private string? CurrentCustomerName;
+    private string? CurrentCustomerPhone;
+    private string tempCustName = "";
+    private string tempCustPhone = "";
+    private bool isCustomerDialogVisible = false;
+
+    // Payment
+    private bool isPaymentDialogVisible = false;
+
+    // Maps ProductId -> Current Stock Quantity
+    private Dictionary<string, int> ProductStock = new();
+    private DialogOptions dialogOptions = new() { MaxWidth = MaxWidth.Small, FullWidth = true };
+    private decimal CartTotal => CartItems.Sum(i => i.Quantity * i.UnitPrice);
+
+    protected override async Task OnInitializedAsync()
+    {
+        AvailableUnits = (await UnitOfWork.Units.GetAllAsync()).ToList();
+        CurrencySymbol = Terminology.GetText("CurrencySymbol", "$");
+        PosState.OnChange += StateHasChanged;
+
+        await CheckForAutoLogin();
+        isLoading = false;
+    }
+
+    // --- AUTO-LOGIN LOGIC ---
+    private async Task CheckForAutoLogin()
+    {
+        if (PosState.IsUnitSelected && PosState.CurrentUnit != null)
+        {
+            await LoadPosData(PosState.CurrentUnit);
+            return;
+        }
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var user = await UserManager.GetUserAsync(authState.User);
+
+            if (user != null && !string.IsNullOrEmpty(user.DefaultUnitId))
+            {
+                var assignedUnit = AvailableUnits.FirstOrDefault(u => u.Id == user.DefaultUnitId);
+                if (assignedUnit != null)
+                {
+                    await SelectUnit(assignedUnit);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Auto-login error: " + ex.Message);
+        }
+    }
+
+    private async Task SelectUnit(Unit unit)
+    {
+        try
+        {
+            isLoading = true;
+            PosState.SetUnit(unit);
+            await LoadPosData(unit);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Error loading unit.", Severity.Error);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task LoadPosData(Unit unit)
+    {
+        Categories = (await UnitOfWork.Categories.GetAllAsync()).ToList();
+
+        // 1. Get Stock Links
+        var links = (await UnitOfWork.UnitProducts.FindAsync(x => x.UnitId == unit.Id)).ToList();
+
+        // FIX: Use 'StockQuantity' (from your entity) and handle nulls
+        ProductStock = links.ToDictionary(
+            k => k.ProductId,
+            v => (int)(v.StockQuantity ?? 0)
+        );
+
+        // 2. Load Products
+        var allDbProducts = await UnitOfWork.Products.GetAllAsync();
+
+        // 3. Filter Logic
+        AllProducts = allDbProducts.Where(p =>
+        {
+            if (!p.IsPosVisible) return false;
+            return true;
+        }).ToList();
+
+        FilteredProducts = AllProducts;
+    }
+
+    private void AddToCart(Product product)
+    {
+        // 1. Safety Check
+        if (!product.IsPosVisible) return;
+
+        // 2. STOCK CHECK
+        if (product.TrackStock)
+        {
+            // Check the store-specific dictionary
+            int currentStock = ProductStock.ContainsKey(product.Id) ? ProductStock[product.Id] : 0;
+
+            var existingItem = CartItems.FirstOrDefault(x => x.ProductId == product.Id);
+            int inCart = existingItem?.Quantity ?? 0;
+
+            if (inCart + 1 > currentStock)
+            {
+                Snackbar.Add($"Out of Stock! Only {currentStock} left at this location.", Severity.Warning);
+                return;
+            }
+        }
+
+        // 3. Add to Cart
+        var existing = CartItems.FirstOrDefault(x => x.ProductId == product.Id);
+        if (existing != null)
+        {
+            existing.Quantity++;
+        }
+        else
+        {
+            CartItems.Add(new CartItem
+            {
+                ProductId = product.Id,
+                ProductName = product.Name,
+                UnitPrice = product.BasePrice,
+                Quantity = 1
+            });
+        }
+    }
+
+    private void UpdateQty(CartItem item, int change)
+    {
+        item.Quantity += change;
+        if (item.Quantity <= 0) CartItems.Remove(item);
+    }
+
+    private void RemoveItem(CartItem item) => CartItems.Remove(item);
+
+    private void ClearCart()
+    {
+        CartItems.Clear();
+        CurrentCustomerName = null;
+        CurrentCustomerPhone = null;
+    }
+
+    // --- SEARCH ---
+    private void FilterCategory(string catId)
+    {
+        SelectedCategory = catId;
+        ApplyFilters();
+    }
+    private void OnSearchChanged(string text)
+    {
+        SearchTerm = text;
+        ApplyFilters();
+    }
+    private void ApplyFilters()
+    {
+        var query = AllProducts.AsEnumerable();
+        if (SelectedCategory != "All") query = query.Where(p => p.CategoryId == SelectedCategory);
+        if (!string.IsNullOrWhiteSpace(SearchTerm)) query = query.Where(p => p.Name.Contains(SearchTerm, StringComparison.OrdinalIgnoreCase) || (p.SKU != null && p.SKU.Contains(SearchTerm)));
+        FilteredProducts = query.ToList();
+    }
+
+    // --- CUSTOMER ---
+    private void OpenCustomerDialog()
+    {
+        tempCustName = CurrentCustomerName ?? "";
+        tempCustPhone = CurrentCustomerPhone ?? "";
+        isCustomerDialogVisible = true;
+    }
+    private void SaveCustomer()
+    {
+        CurrentCustomerName = tempCustName;
+        CurrentCustomerPhone = tempCustPhone;
+        isCustomerDialogVisible = false;
+    }
+
+    // --- PARK / DRAFT ---
+    private void ParkOrder()
+    {
+        if (!CartItems.Any()) return;
+        var order = new Order
+        {
+            OrderNumber = $"DRAFT-{ParkedOrders.Count + 1}",
+            CustomerName = CurrentCustomerName,
+            TotalAmount = CartTotal,
+            Status = "Parked",
+            UnitId = PosState.CurrentUnit?.Id ?? "",
+            TenantId = PosState.CurrentUnit?.TenantId ?? ""
+        };
+        ParkedOrders.Add(order);
+        ClearCart();
+        Snackbar.Add("Order Parked", Severity.Info);
+    }
+
+    private void ShowParkedOrders()
+    {
+        if (ParkedOrders.Any())
+        {
+            var last = ParkedOrders.Last();
+            Snackbar.Add($"Restored: {last.OrderNumber}", Severity.Success);
+            ParkedOrders.Remove(last);
+        }
+    }
+
+    // --- PAYMENT ---
+    private void OpenPaymentDialog() => isPaymentDialogVisible = true;
+
+    // [UPDATED] Uses StockService for Deduction & Audit Logging
+    private async Task ProcessPayment(string method)
+    {
+        // 1. Close Dialog & Show Loading
+        isPaymentDialogVisible = false;
+        Snackbar.Add("Processing Transaction...", Severity.Info);
+
+        try
+        {
+            // 2. Build the Order Object
+            var newOrder = new Order
+            {
+                Id = Guid.NewGuid().ToString(),
+                OrderNumber = $"ORD-{DateTime.UtcNow:yyyyMMdd}-{DateTime.UtcNow.Ticks.ToString().Substring(10)}",
+                TotalAmount = CartTotal,
+                PaymentMethod = method,
+                Status = "Completed",
+                CreatedAt = DateTime.UtcNow,
+                CustomerName = CurrentCustomerName,
+                CustomerPhone = CurrentCustomerPhone,
+                UnitId = PosState.CurrentUnit?.Id ?? "",
+                TenantId = PosState.CurrentUnit?.TenantId ?? "",
+                IsSynced = true
+            };
+
+            // 3. Process Cart Items
+            foreach (var item in CartItems)
+            {
+                // A. Add to Order
+                newOrder.OrderItems.Add(new OrderItem
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    OrderId = newOrder.Id,
+                    ProductId = item.ProductId,
+                    ProductName = item.ProductName,
+                    UnitPrice = item.UnitPrice,
+                    Quantity = item.Quantity,
+                    CreatedAt = DateTime.UtcNow,
+                    TenantId = newOrder.TenantId
+                });
+
+                // B. DEDUCT STOCK & LOG MOVEMENT (Only if Tracked)
+                // We check our local product list to see if this item tracks stock
+                var productDef = AllProducts.FirstOrDefault(p => p.Id == item.ProductId);
+
+                if (productDef != null && productDef.TrackStock)
+                {
+                    // Call the Service:
+                    // - Deducts stock (UnitProduct table)
+                    // - Logs history (StockMovements table)
+                    // - Amount is negative because we are selling
+                    await StockService.AdjustStockAsync(
+                        newOrder.UnitId,
+                        item.ProductId,
+                        -item.Quantity,          // Negative amount
+                        "Sale",                  // Type
+                        $"Order {newOrder.OrderNumber}", // Reason
+                        "System/Cashier",        // User
+                        newOrder.Id              // Reference ID
+                    );
+
+                    // Update UI Badge locally
+                    if (ProductStock.ContainsKey(item.ProductId))
+                    {
+                        ProductStock[item.ProductId] -= item.Quantity;
+                    }
+                }
+            }
+
+            // 4. Save to Database (REAL SAVE)
+            // This saves the Order AND the Stock changes (queued by the Service) in one transaction
+            await UnitOfWork.Orders.AddAsync(newOrder);
+            await UnitOfWork.CompleteAsync();
+
+            // 5. Success Feedback
+            Snackbar.Add($"Order {newOrder.OrderNumber} Completed!", Severity.Success);
+
+            // 6. Print Receipt
+            string storeName = PosState.CurrentUnit?.Name ?? "My POS Store";
+            await ReceiptPrinter.PrintAsync(newOrder, storeName, "123 Main St");
+
+            // 7. Reset UI
+            ClearCart();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Transaction Failed: {ex.Message}", Severity.Error);
+            Console.WriteLine(ex.ToString());
+        }
+    }
+
+    public void Dispose() => PosState.OnChange -= StateHasChanged;
+
+    public class CartItem
+    {
+        public string ProductId { get; set; }
+        public string ProductName { get; set; }
+        public decimal UnitPrice { get; set; }
+        public int Quantity { get; set; }
+    }
+}

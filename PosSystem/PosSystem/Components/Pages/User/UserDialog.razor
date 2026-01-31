@@ -5,29 +5,51 @@
 @using PosSystem.Data.Repositories.Interfaces
 @using PosSystem.Services
 @using Microsoft.AspNetCore.Authorization
+@using System.Security.Claims
 
 @attribute [Authorize(Policy = "Permissions.Users.Edit")]
 
 @inject UserManager<ApplicationUser> UserManager
 @inject IUnitOfWork UnitOfWork
 @inject ISnackbar Snackbar
+@inject NotificationService NotifyService
+@inject TerminologyService Terminology
 
 <MudDialog>
     <DialogContent>
         <MudForm @ref="form" Model="@Model">
             <MudGrid>
+                @* --- SUPER ADMIN TENANT SELECTION --- *@
+                @if (IsSuperAdmin && IsNewUser)
+                {
+                    <MudItem xs="12">
+                        <MudSelect T="string" Label="Assign to Tenant"
+                                   Value="@Model.TenantId"
+                                   ValueChanged="OnTenantChanged"
+                                   Variant="Variant.Outlined"
+                                   AnchorOrigin="Origin.BottomCenter"
+                                   HelperText="Leave empty for Global Super Admin">
+                            <MudSelectItem Value="@((string?)null)">No Tenant (Global Super Admin)</MudSelectItem>
+                            @foreach (var tenant in AvailableTenants)
+                            {
+                                <MudSelectItem Value="@tenant.Id">@tenant.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                }
+
                 <MudItem xs="12" sm="6">
                     <MudTextField @bind-Value="Model.Email"
-                                  Label="Email (Optional for POS)"
+                                  Label="Email (Login ID)"
                                   InputType="InputType.Email"
                                   Variant="Variant.Outlined"
                                   Disabled="!IsNewUser"
-                                  HelperText="@(IsNewUser ? "Required for new users" : "Cannot change email here")" />
+                                  HelperText="@(IsNewUser ? "Required" : "Cannot change email")" />
                 </MudItem>
 
                 <MudItem xs="12" sm="6">
                     <MudTextField @bind-Value="Model.UserName"
-                                  Label="Username / Employee ID"
+                                  Label="Username"
                                   Required="true"
                                   Variant="Variant.Outlined"
                                   Disabled="!IsNewUser" />
@@ -40,24 +62,49 @@
                                       Label="Initial Password"
                                       InputType="InputType.Password"
                                       Required="true"
-                                      Variant="Variant.Outlined" />
+                                      Variant="Variant.Outlined"
+                                      HelperText="User will be forced to change this on first login." />
+                    </MudItem>
+
+                    @* --- NOTIFICATION OPTIONS --- *@
+                    <MudItem xs="12">
+                        <MudPaper Class="pa-4 mt-2" Outlined="true" Style="background-color: var(--mud-palette-background-grey);">
+                            <MudText Typo="Typo.subtitle2" Class="mb-2">Send Credentials Via:</MudText>
+                            <MudGrid>
+                                <MudItem xs="4">
+                                    <MudCheckBox @bind-Value="SendViaEmail" Label="Email" Color="Color.Primary" Dense="true" />
+                                </MudItem>
+                                <MudItem xs="4">
+                                    <MudCheckBox @bind-Value="SendViaSms" Label="SMS" Color="Color.Secondary" Dense="true" />
+                                </MudItem>
+                                <MudItem xs="4">
+                                    <MudCheckBox @bind-Value="SendViaWhatsApp" Label="WhatsApp" Color="Color.Success" Dense="true" />
+                                </MudItem>
+                            </MudGrid>
+                        </MudPaper>
                     </MudItem>
                 }
                 else
                 {
                     <MudItem xs="12">
                         <MudExpansionPanels Elevation="0" Outlined="true">
-                            <MudExpansionPanel Text="Reset Password Only" Icon="@Icons.Material.Filled.LockReset">
+                            <MudExpansionPanel Text="Reset Password / Security" Icon="@Icons.Material.Filled.LockReset">
                                 <MudTextField @bind-Value="Password"
                                               Label="New Password"
                                               InputType="InputType.Password"
                                               Variant="Variant.Outlined"
-                                              HelperText="Type a new password to reset it, otherwise leave blank." />
+                                              HelperText="Leave blank to keep current password." />
+
+                                <MudCheckBox @bind-Value="ForceChangeOnNextLogin"
+                                             Label="Force user to change password on next login?"
+                                             Color="Color.Warning"
+                                             Class="mt-2" />
                             </MudExpansionPanel>
                         </MudExpansionPanels>
                     </MudItem>
                 }
 
+                @* --- ROLE SELECTION --- *@
                 <MudItem xs="12" sm="6">
                     <MudSelect T="string"
                                Label="Assigned Role"
@@ -71,8 +118,23 @@
                     </MudSelect>
                 </MudItem>
 
-                @* [FIX]: Added Status Toggle here *@
-                <MudItem xs="12" sm="6" Class="d-flex align-center">
+                @* --- [NEW] UNIT ASSIGNMENT --- *@
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="string"
+                               Label="@($"Assign to {Terminology.GetText("Label_Unit", "Unit")} (Optional)")"
+                               @bind-Value="Model.DefaultUnitId"
+                               Variant="Variant.Outlined"
+                               Clearable="true"
+                               HelperText="User will automatically log into this Unit."
+                               AnchorOrigin="Origin.BottomCenter">
+                        @foreach (var unit in AvailableUnits)
+                        {
+                            <MudSelectItem Value="@unit.Id">@unit.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+
+                <MudItem xs="12" Class="d-flex align-center">
                     <MudSwitch @bind-Value="Model.EmailConfirmed"
                                Color="Color.Success"
                                Label="@(Model.EmailConfirmed ? "Status: Active" : "Status: Inactive")" />
@@ -96,24 +158,86 @@
     private MudForm form = default!;
     private string Password { get; set; } = string.Empty;
     private string SelectedRoleName { get; set; } = string.Empty;
+
     private List<ApplicationRole> AvailableRoles = new();
-    private bool IsNewUser => string.IsNullOrEmpty(Model.Id);
+    private List<Tenant> AvailableTenants = new();
+
+    // [NEW] List to hold Units for the specific tenant
+    private List<Unit> AvailableUnits = new();
+
+    private bool SendViaEmail { get; set; } = true;
+    private bool SendViaSms { get; set; } = false;
+    private bool SendViaWhatsApp { get; set; } = false;
+    private bool ForceChangeOnNextLogin { get; set; } = true;
+
+    private bool IsNewUser => string.IsNullOrEmpty(Model.Id) || Model.Id == Guid.Empty.ToString();
+    private bool IsSuperAdmin => string.IsNullOrEmpty(TenantId);
 
     protected override async Task OnInitializedAsync()
     {
-        var roles = await UnitOfWork.Roles.FindAsync(r => r.TenantId == TenantId);
-        AvailableRoles = roles.OrderBy(r => r.Name).ToList();
+        if (IsSuperAdmin)
+        {
+            var tenants = await UnitOfWork.Tenants.GetAllAsync();
+            AvailableTenants = tenants.OrderBy(t => t.Name).ToList();
+        }
+
+        // Load Roles AND Units
+        await LoadRolesAsync();
+        await LoadUnitsAsync(); // [NEW]
 
         if (!IsNewUser)
         {
             var userRoles = await UserManager.GetRolesAsync(Model);
             SelectedRoleName = userRoles.FirstOrDefault() ?? string.Empty;
+
+            var claims = await UserManager.GetClaimsAsync(Model);
+            ForceChangeOnNextLogin = claims.Any(c => c.Type == "MustChangePassword");
         }
         else
         {
-            // Default to Active for new users
             Model.EmailConfirmed = true;
+            ForceChangeOnNextLogin = true;
+            if (!IsSuperAdmin) Model.TenantId = TenantId;
         }
+    }
+
+    private async Task OnTenantChanged(string? tenantId)
+    {
+        Model.TenantId = tenantId;
+        // Reload both lists when tenant changes
+        await LoadRolesAsync();
+        await LoadUnitsAsync();
+    }
+
+    private async Task LoadRolesAsync()
+    {
+        var effectiveTenantId = IsSuperAdmin ? Model.TenantId : TenantId;
+        var roles = await UnitOfWork.Roles.FindAsync(r => r.TenantId == effectiveTenantId || r.TenantId == null);
+        AvailableRoles = roles.Where(r => r.Name != "Techspruce").OrderBy(r => r.Name).ToList();
+
+        if (!string.IsNullOrEmpty(SelectedRoleName) && !AvailableRoles.Any(r => r.Name == SelectedRoleName))
+        {
+            SelectedRoleName = string.Empty;
+        }
+        StateHasChanged();
+    }
+
+    // [NEW] Helper to load units specific to the selected tenant
+    private async Task LoadUnitsAsync()
+    {
+        var effectiveTenantId = IsSuperAdmin ? Model.TenantId : TenantId;
+
+        if (string.IsNullOrEmpty(effectiveTenantId))
+        {
+            // If no tenant selected (Global Admin context), usually no units to assign
+            AvailableUnits = new List<Unit>();
+        }
+        else
+        {
+            var units = await UnitOfWork.Units.FindAsync(u => u.TenantId == effectiveTenantId);
+            AvailableUnits = units.OrderBy(u => u.Name).ToList();
+        }
+        StateHasChanged();
     }
 
     private void Cancel() => MudDialog.Cancel();
@@ -126,18 +250,24 @@
             try
             {
                 IdentityResult result;
+                bool isNew = IsNewUser;
 
-                if (IsNewUser)
+                if (!IsSuperAdmin) Model.TenantId = TenantId;
+
+                // [NOTE] Model.DefaultUnitId is automatically saved because it is bound to the Model
+
+                if (isNew)
                 {
-                    if (string.IsNullOrEmpty(Model.Email)) Model.Email = $"{Model.UserName}@pos.local";
-                    Model.TenantId = TenantId;
+                    Model.Id = Guid.NewGuid().ToString();
+                    if (string.IsNullOrEmpty(Model.Email))
+                        Model.Email = $"{Model.UserName}@{(IsSuperAdmin ? (Model.TenantId ?? "admin") : TenantId)}.local";
+
                     result = await UserManager.CreateAsync(Model, Password);
+                    ForceChangeOnNextLogin = true;
                 }
                 else
                 {
-                    // UpdateAsync saves the EmailConfirmed (Status) change
                     result = await UserManager.UpdateAsync(Model);
-
                     if (result.Succeeded && !string.IsNullOrWhiteSpace(Password))
                     {
                         var token = await UserManager.GeneratePasswordResetTokenAsync(Model);
@@ -147,6 +277,7 @@
 
                 if (result.Succeeded)
                 {
+                    // Roles Update
                     var currentRoles = await UserManager.GetRolesAsync(Model);
                     if (currentRoles.FirstOrDefault() != SelectedRoleName)
                     {
@@ -154,7 +285,30 @@
                         if (!string.IsNullOrEmpty(SelectedRoleName)) await UserManager.AddToRoleAsync(Model, SelectedRoleName);
                     }
 
-                    Snackbar.Add("User updated successfully.", Severity.Success);
+                    // Claims Update
+                    var claims = await UserManager.GetClaimsAsync(Model);
+                    var existingClaim = claims.FirstOrDefault(c => c.Type == "MustChangePassword");
+
+                    if (ForceChangeOnNextLogin)
+                    {
+                        if (existingClaim == null) await UserManager.AddClaimAsync(Model, new Claim("MustChangePassword", "true"));
+                    }
+                    else
+                    {
+                        if (existingClaim != null) await UserManager.RemoveClaimAsync(Model, existingClaim);
+                    }
+
+                    // Notifications
+                    if (SendViaEmail)
+                    {
+                        await NotifyService.SendCredentialsEmailAsync(Model.Email, Model.UserName, Password, Model.TenantId);
+                        Snackbar.Add($"Email queued for {Model.Email}", Severity.Info);
+                    }
+
+                    if (SendViaSms) Snackbar.Add("SMS queued (Mock)", Severity.Info);
+                    if (SendViaWhatsApp) Snackbar.Add("WhatsApp queued (Mock)", Severity.Info);
+
+                    Snackbar.Add(isNew ? "User created successfully." : "User updated successfully.", Severity.Success);
                     MudDialog.Close(DialogResult.Ok(true));
                 }
                 else

@@ -5,7 +5,6 @@
 @using PosSystem.Data.Repositories.Interfaces
 @using Microsoft.AspNetCore.Authorization
 
-@* Ensure only Super Admins can define what plans offer *@
 @attribute [Authorize(Policy = "Permissions.Plans.Edit")]
 
 @inject IUnitOfWork UnitOfWork
@@ -22,8 +21,8 @@
                             <MudTextField @bind-Value="Model.Name" Label="Plan Name" Required="true" Variant="Variant.Outlined" />
                         </MudItem>
                         <MudItem xs="12" sm="4">
-                            @* [NEW] Plan Type Selection *@
-                            <MudSelect T="PlanType" Label="Billing Cycle" @bind-Value="Model.Type" Variant="Variant.Outlined">
+                            @* FIX: Changed @bind-Value to Value/ValueChanged to trigger OnTypeChanged logic *@
+                            <MudSelect T="PlanType" Label="Billing Cycle" Value="Model.Type" ValueChanged="OnTypeChanged" Variant="Variant.Outlined">
                                 <MudSelectItem Value="PlanType.Monthly">Monthly</MudSelectItem>
                                 <MudSelectItem Value="PlanType.Yearly">Yearly</MudSelectItem>
                                 <MudSelectItem Value="PlanType.OneTime">One Time / Lifetime</MudSelectItem>
@@ -102,11 +101,10 @@
         IsLoading = true;
         try
         {
-            // Load All Master Permissions via UnitOfWork
             var allPerms = await UnitOfWork.SystemPermissions.GetAllAsync();
             AllPermissions = allPerms.OrderBy(p => p.GroupName).ThenBy(p => p.Name).ToList();
 
-            // Load the specific codes already assigned to this Plan
+            // Correct check for String ID (GUID)
             if (!string.IsNullOrEmpty(Model.Id))
             {
                 var existing = await UnitOfWork.PlanPermissions.FindAsync(p => p.SubscriptionPlanId == Model.Id);
@@ -126,20 +124,21 @@
     }
 
     private void Cancel() => MudDialog.Cancel();
+
     private void OnTypeChanged(PlanType type)
     {
         Model.Type = type;
-        // Auto-fill duration based on type
         if (type == PlanType.Monthly) Model.DurationInDays = 30;
         else if (type == PlanType.Yearly) Model.DurationInDays = 365;
         else if (type == PlanType.OneTime) Model.DurationInDays = 9999;
     }
+
     private async Task Submit()
     {
         await form.Validate();
         if (form.IsValid)
         {
-            // Return the object structure your Index.razor expects for its dynamic extraction
+            // Returns the anonymous object exactly as required by Index.razor
             MudDialog.Close(DialogResult.Ok(new { Plan = Model, Permissions = SelectedPermissions }));
         }
     }

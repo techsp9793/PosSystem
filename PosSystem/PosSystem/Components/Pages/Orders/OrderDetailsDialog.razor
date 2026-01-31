@@ -1,0 +1,97 @@
+﻿@using PosSystem.Data.Entities
+@using PosSystem.Services
+
+@inject ReceiptService ReceiptPrinter
+@inject PosStateService PosState
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        <MudContainer Style="max-height: 500px; overflow-y: scroll">
+            @* --- Header --- *@
+            <div class="d-flex justify-space-between align-center mb-2">
+                <div>
+                    <MudText Typo="Typo.h6"><b>@Order.OrderNumber</b></MudText>
+                    <MudText Typo="Typo.caption">@Order.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</MudText>
+                </div>
+                <MudChip T="string" Color="@GetStatusColor(Order.Status)" Size="Size.Small">@Order.Status</MudChip>
+            </div>
+
+            <MudDivider Class="my-2" />
+
+            @* --- Customer & Payment --- *@
+            <div class="mb-3">
+                <MudText Typo="Typo.body2"><b>Customer:</b> @(string.IsNullOrEmpty(Order.CustomerName) ? "Walk-in" : Order.CustomerName)</MudText>
+                <MudText Typo="Typo.body2"><b>Payment:</b> @Order.PaymentMethod</MudText>
+            </div>
+
+            @* --- Items --- *@
+            <MudTable Items="@Order.OrderItems" Dense="true" Hover="true" Elevation="0" Outlined="true" Class="mb-3">
+                <HeaderContent>
+                    <MudTh>Item</MudTh>
+                    <MudTh Style="text-align:center">Qty</MudTh>
+                    <MudTh Style="text-align:right">Price</MudTh>
+                    <MudTh Style="text-align:right">Total</MudTh>
+                </HeaderContent>
+                <RowTemplate Context="item">
+                    <MudTd DataLabel="Item"><MudText Typo="Typo.body2">@item.ProductName</MudText></MudTd>
+                    <MudTd DataLabel="Qty" Style="text-align:center">@item.Quantity</MudTd>
+                    <MudTd DataLabel="Price" Style="text-align:right">@item.UnitPrice.ToString("N2")</MudTd>
+                    <MudTd DataLabel="Total" Style="text-align:right">@item.TotalPrice.ToString("N2")</MudTd>
+                </RowTemplate>
+            </MudTable>
+
+            @* --- Total --- *@
+            <div class="d-flex flex-column align-end">
+                <MudText Typo="Typo.subtitle1"><b>Total: @Order.TotalAmount.ToString("C2")</b></MudText>
+            </div>
+        </MudContainer>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Close</MudButton>
+
+        @* FIX: Use explicit Lambda syntax to ensure the event fires *@
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Print"
+                   OnClick="@(async () => await PrintReceipt())">
+            Print
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; }
+
+    [Parameter] public Order Order { get; set; } = new();
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task PrintReceipt()
+    {
+        // DEBUG: If you see this in the UI, the button works!
+        Snackbar.Add("Generating Receipt...", Severity.Info);
+
+        try
+        {
+            string storeName = PosState.CurrentUnit?.Name ?? "My POS Store";
+            string address = "123 Main Street";
+
+            // If the JS file is missing, this line will throw an error
+            await ReceiptPrinter.PrintAsync(Order, storeName, address);
+
+            Snackbar.Add("Sent to Printer", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+            Console.WriteLine(ex.ToString()); // Check Browser Console (F12) for details
+        }
+    }
+
+    private Color GetStatusColor(string status) => status switch
+    {
+        "Completed" => Color.Success,
+        "Parked" => Color.Warning,
+        "Void" => Color.Error,
+        _ => Color.Default
+    };
+}

@@ -3,10 +3,10 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace PosSystem.Data.Entities
 {
-    public class PlanPermission
+    public class PlanPermission: BaseEntity
     {
-        [Key]
-        public int Id { get; set; }
+        //[Key]
+        //public int Id { get; set; }
 
         public string SubscriptionPlanId { get; set; } = string.Empty;
 

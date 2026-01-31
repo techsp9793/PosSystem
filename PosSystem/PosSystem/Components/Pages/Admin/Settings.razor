@@ -1,0 +1,264 @@
+﻿@page "/settings"
+@using Microsoft.AspNetCore.Authorization
+@using System.Security.Claims
+@using PosSystem.Data.Repositories.Interfaces
+@using PosSystem.Data.Entities
+@using PosSystem.Services
+
+@* Ensure only Admins/SuperAdmins can access *@
+@attribute [Authorize(Policy = "Permissions.Tenants.Edit")]
+
+@inject AuthenticationStateProvider AuthStateProvider
+@inject ISnackbar Snackbar
+@inject IUnitOfWork UnitOfWork
+@* INJECT THE BACKEND SERVICE *@
+@inject SystemSettingsService SettingsService
+
+<PageTitle>Settings - MyPOS</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudText Typo="Typo.h5" Class="mb-4">Configuration & Settings</MudText>
+
+    <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
+
+        @* --- TAB 1: GENERAL SETTINGS (Visible to All Admins) --- *@
+        <MudTabPanel Text="General" Icon="@Icons.Material.Filled.Settings">
+            <MudText Typo="Typo.h6" Class="mb-4">Company Details</MudText>
+            <MudGrid>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="companyName" Label="Company / Store Name" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="supportEmail" Label="Support Email" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudSelect T="string" Label="Default Currency" Variant="Variant.Outlined" @bind-Value="currency">
+                        <MudSelectItem Value="@("USD")">USD ($)</MudSelectItem>
+                        <MudSelectItem Value="@("INR")">INR (₹)</MudSelectItem>
+                        <MudSelectItem Value="@("EUR")">EUR (€)</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudSelect T="string" Label="Time Zone" Variant="Variant.Outlined" @bind-Value="timeZone">
+                        <MudSelectItem Value="@("UTC")">UTC</MudSelectItem>
+                        <MudSelectItem Value="@("IST")">India Standard Time</MudSelectItem>
+                        <MudSelectItem Value="@("EST")">Eastern Standard Time</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+
+                <MudItem xs="12" Class="d-flex justify-end mt-4">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveGeneralSettings">Save Changes</MudButton>
+                </MudItem>
+            </MudGrid>
+        </MudTabPanel>
+
+        @* --- TAB 2: INTEGRATIONS (API Keys used by NotificationService) --- *@
+        <MudTabPanel Text="Integrations" Icon="@Icons.Material.Filled.Api">
+            <MudText Typo="Typo.h6" Class="mb-2">Communication Gateways</MudText>
+            <MudText Typo="Typo.caption" Class="mb-4 d-block">
+                These keys are used to send credential emails, SMS OTPs, and WhatsApp alerts.
+            </MudText>
+
+            <MudGrid>
+                @* Email Settings *@
+                <MudItem xs="12">
+                    <MudText Typo="Typo.subtitle2" Color="Color.Primary" Class="mt-2">Email (SMTP)</MudText>
+                    <MudDivider />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="smtpHost" Label="SMTP Host" Placeholder="e.g., smtp.gmail.com" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="smtpPort" Label="SMTP Port" Placeholder="587" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="smtpUser" Label="SMTP Username" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="smtpPass" Label="SMTP Password" InputType="InputType.Password" Variant="Variant.Outlined" />
+                </MudItem>
+
+                @* SMS Settings *@
+                <MudItem xs="12">
+                    <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mt-4">SMS Gateway</MudText>
+                    <MudDivider />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="smsApiKey" Label="SMS API Key" InputType="InputType.Password" Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="smsSenderId" Label="Sender ID" Placeholder="e.g., MYPOS" Variant="Variant.Outlined" />
+                </MudItem>
+
+                @* WhatsApp Settings *@
+                <MudItem xs="12">
+                    <MudText Typo="Typo.subtitle2" Color="Color.Success" Class="mt-4">WhatsApp Business API</MudText>
+                    <MudDivider />
+                </MudItem>
+                <MudItem xs="12" md="12">
+                    <MudTextField @bind-Value="whatsappToken" Label="WhatsApp Permanent Token" InputType="InputType.Password" Variant="Variant.Outlined" />
+                </MudItem>
+
+                <MudItem xs="12" Class="d-flex justify-end mt-4">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveIntegrations">Update Keys</MudButton>
+                </MudItem>
+            </MudGrid>
+        </MudTabPanel>
+
+        @* --- TAB 3: SUPER ADMIN CONFIG (Only Visible to Techspruce/Global Admin) --- *@
+        @if (IsSuperAdmin)
+        {
+            <MudTabPanel Text="System Config" Icon="@Icons.Material.Filled.AdminPanelSettings" Style="color: var(--mud-palette-error);">
+                <MudAlert Severity="Severity.Warning" Class="mb-4">
+                    <b>Global Settings:</b> These configurations affect the entire SaaS platform logic.
+                </MudAlert>
+
+                <MudGrid>
+                    <MudItem xs="12">
+                        <MudText Typo="Typo.h6">Social Login Providers</MudText>
+                    </MudItem>
+
+                    <MudItem xs="12" md="6">
+                        <MudTextField @bind-Value="googleClientId" Label="Google Client ID" Variant="Variant.Outlined" />
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudTextField @bind-Value="googleClientSecret" Label="Google Client Secret" Variant="Variant.Outlined" InputType="InputType.Password" />
+                    </MudItem>
+
+                    <MudItem xs="12" md="6">
+                        <MudTextField @bind-Value="fbAppId" Label="Facebook App ID" Variant="Variant.Outlined" />
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudTextField @bind-Value="fbAppSecret" Label="Facebook App Secret" Variant="Variant.Outlined" InputType="InputType.Password" />
+                    </MudItem>
+
+                    <MudItem xs="12">
+                        <MudSwitch T="bool" Label="Enable Global User Registration" Color="Color.Success" @bind-Checked="globalRegistrationEnabled" />
+                        <MudText Typo="Typo.caption">If disabled, only Admins can create users manually.</MudText>
+                    </MudItem>
+
+                    <MudItem xs="12" Class="d-flex justify-end">
+                        <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="SaveSystemConfig">Update System Config</MudButton>
+                    </MudItem>
+                </MudGrid>
+            </MudTabPanel>
+        }
+    </MudTabs>
+</MudContainer>
+
+@code {
+    private bool IsSuperAdmin = false;
+    private string? currentTenantId;
+
+    // --- General Settings ---
+    private string companyName = "";
+    private string supportEmail = "";
+    private string currency = "USD";
+    private string timeZone = "UTC";
+
+    // --- Integration Keys (Backend Wired) ---
+    private string smtpHost = "";
+    private string smtpPort = "";
+    private string smtpUser = "";
+    private string smtpPass = "";
+    private string smsApiKey = "";
+    private string smsSenderId = "";
+    private string whatsappToken = "";
+
+    // --- System Config (Super Admin) ---
+    private string googleClientId = "";
+    private string googleClientSecret = "";
+    private string fbAppId = "";
+    private string fbAppSecret = "";
+    private bool globalRegistrationEnabled = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = state.User;
+
+        var tenantClaim = user.FindFirst("tenant_id");
+        currentTenantId = tenantClaim?.Value;
+        IsSuperAdmin = string.IsNullOrEmpty(currentTenantId);
+
+        await LoadSettingsAsync();
+    }
+
+    private async Task LoadSettingsAsync()
+    {
+        // 1. GENERAL
+        companyName = await SettingsService.GetValueAsync("Company_Name", currentTenantId);
+        supportEmail = await SettingsService.GetValueAsync("Support_Email", currentTenantId);
+        currency = await SettingsService.GetValueAsync("Currency", currentTenantId) ?? "USD";
+        timeZone = await SettingsService.GetValueAsync("TimeZone", currentTenantId) ?? "UTC";
+
+        // 2. INTEGRATIONS (Notifications)
+        smtpHost = await SettingsService.GetValueAsync("SMTP_Host", currentTenantId);
+        smtpPort = await SettingsService.GetValueAsync("SMTP_Port", currentTenantId);
+        smtpUser = await SettingsService.GetValueAsync("SMTP_User", currentTenantId);
+        smtpPass = await SettingsService.GetValueAsync("SMTP_Pass", currentTenantId);
+
+        smsApiKey = await SettingsService.GetValueAsync("SMS_Key", currentTenantId);
+        smsSenderId = await SettingsService.GetValueAsync("SMS_Sender", currentTenantId);
+
+        whatsappToken = await SettingsService.GetValueAsync("WA_Token", currentTenantId);
+
+        // 3. SYSTEM CONFIG (Global only)
+        if (IsSuperAdmin)
+        {
+            googleClientId = await SettingsService.GetValueAsync("Google_ClientId");
+            googleClientSecret = await SettingsService.GetValueAsync("Google_ClientSecret");
+            fbAppId = await SettingsService.GetValueAsync("FB_AppId");
+            fbAppSecret = await SettingsService.GetValueAsync("FB_AppSecret");
+
+            var regEnabled = await SettingsService.GetValueAsync("Global_Registration");
+            bool.TryParse(regEnabled, out globalRegistrationEnabled);
+        }
+    }
+
+    private async Task SaveGeneralSettings()
+    {
+        await SettingsService.SetValueAsync("Company_Name", companyName, currentTenantId);
+        await SettingsService.SetValueAsync("Support_Email", supportEmail, currentTenantId);
+        await SettingsService.SetValueAsync("Currency", currency, currentTenantId);
+        await SettingsService.SetValueAsync("TimeZone", timeZone, currentTenantId);
+
+        Snackbar.Add("General settings saved successfully", Severity.Success);
+    }
+
+    private async Task SaveIntegrations()
+    {
+        await SettingsService.SetValueAsync("SMTP_Host", smtpHost, currentTenantId);
+        await SettingsService.SetValueAsync("SMTP_Port", smtpPort, currentTenantId);
+        await SettingsService.SetValueAsync("SMTP_User", smtpUser, currentTenantId);
+
+        // Only update password if user typed something (basic security UX)
+        if (!string.IsNullOrEmpty(smtpPass))
+            await SettingsService.SetValueAsync("SMTP_Pass", smtpPass, currentTenantId);
+
+        await SettingsService.SetValueAsync("SMS_Key", smsApiKey, currentTenantId);
+        await SettingsService.SetValueAsync("SMS_Sender", smsSenderId, currentTenantId);
+
+        if (!string.IsNullOrEmpty(whatsappToken))
+            await SettingsService.SetValueAsync("WA_Token", whatsappToken, currentTenantId);
+
+        Snackbar.Add("Integration keys updated", Severity.Success);
+    }
+
+    private async Task SaveSystemConfig()
+    {
+        if (!IsSuperAdmin) return;
+
+        await SettingsService.SetValueAsync("Google_ClientId", googleClientId);
+        if (!string.IsNullOrEmpty(googleClientSecret))
+            await SettingsService.SetValueAsync("Google_ClientSecret", googleClientSecret);
+
+        await SettingsService.SetValueAsync("FB_AppId", fbAppId);
+        if (!string.IsNullOrEmpty(fbAppSecret))
+            await SettingsService.SetValueAsync("FB_AppSecret", fbAppSecret);
+
+        await SettingsService.SetValueAsync("Global_Registration", globalRegistrationEnabled.ToString());
+
+        Snackbar.Add("System configuration updated", Severity.Success);
+    }
+}

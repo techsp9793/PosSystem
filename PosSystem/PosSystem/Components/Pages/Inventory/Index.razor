@@ -1,0 +1,219 @@
+﻿@page "/inventory"
+@using PosSystem.Data.Entities
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Services
+
+@* [NEW] Implements IDisposable to handle event subscriptions cleanly *@
+@implements IDisposable
+
+@attribute [Authorize(Policy = "Permissions.Inventory.View")]
+
+@inject IUnitOfWork UnitOfWork
+@inject PosStateService PosState
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>Inventory Management</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="mt-4">
+    @if (!PosState.IsUnitSelected)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Class="mb-4">
+            Please select a Location (Unit) in the top menu to manage inventory.
+        </MudAlert>
+    }
+    else
+    {
+        <div class="d-flex justify-space-between align-center mb-4">
+            <div>
+                <MudText Typo="Typo.h5"><b>Inventory: @PosState.CurrentUnit?.Name</b></MudText>
+                <MudText Typo="Typo.caption">Manage stock levels for this location</MudText>
+            </div>
+            <MudTextField @bind-Value="searchString" Placeholder="Search Product..."
+                          Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                          Class="mt-0" Style="max-width: 300px;" TextChanged="OnSearch" />
+        </div>
+
+        <MudTable Items="@FilteredItems" Dense="true" Hover="true" Striped="true" Loading="@isLoading">
+            <HeaderContent>
+                <MudTh>Product</MudTh>
+                <MudTh>SKU</MudTh>
+                <MudTh>Category</MudTh>
+                <MudTh>Type</MudTh>
+                <MudTh Style="text-align:right">Current Stock</MudTh>
+                <MudTh Style="text-align:center">Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Product">
+                    <MudText Typo="Typo.body2" Style="font-weight:600">@context.ProductName</MudText>
+                </MudTd>
+                <MudTd DataLabel="SKU">@context.SKU</MudTd>
+                <MudTd DataLabel="Category">@context.CategoryName</MudTd>
+                <MudTd DataLabel="Type">
+                    @if (context.TrackStock)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Text">Physical</MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Text">Service</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Stock" Style="text-align:right">
+                    @if (context.TrackStock)
+                    {
+                        <MudText Color="@(context.Quantity <= 5 ? Color.Error : Color.Success)" Style="font-weight:bold">
+                            @context.Quantity
+                        </MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Class="text-muted">N/A</MudText>
+                    }
+                </MudTd>
+                <MudTd Style="text-align:center">
+                    @if (context.TrackStock)
+                    {
+                        @* [NEW] Actions Group: History + Adjust *@
+                        <div class="d-flex justify-center gap-2">
+
+                            <MudTooltip Text="View History">
+                                <MudIconButton Icon="@Icons.Material.Filled.History"
+                                               Size="Size.Small"
+                                               Color="Color.Default"
+                                               OnClick="@(() => OpenHistoryDialog(context))" />
+                            </MudTooltip>
+
+                            <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Primary"
+                                       OnClick="@(() => OpenAdjustmentDialog(context))">
+                                Adjust
+                            </MudButton>
+                        </div>
+                    }
+                </MudTd>
+            </RowTemplate>
+            <PagerContent>
+                <MudTablePager />
+            </PagerContent>
+        </MudTable>
+    }
+</MudContainer>
+
+@code {
+    private bool isLoading = true;
+    private string searchString = "";
+    private List<InventoryItemViewModel> AllItems = new();
+    private List<InventoryItemViewModel> FilteredItems = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Subscribe to the global unit change event
+        PosState.OnChange += HandleUnitChange;
+
+        await LoadData();
+    }
+
+    // Event Handler: Reloads data when user changes dropdown in Layout
+    private async void HandleUnitChange()
+    {
+        await LoadData();
+        // We must call StateHasChanged because this event fires from outside this component
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // Unsubscribe to prevent memory leaks
+    public void Dispose()
+    {
+        PosState.OnChange -= HandleUnitChange;
+    }
+
+    private async Task LoadData()
+    {
+        if (!PosState.IsUnitSelected) return;
+
+        isLoading = true;
+        try
+        {
+            var products = await UnitOfWork.Products.GetAllAsync();
+            var unitId = PosState.CurrentUnit.Id;
+            var stockRecords = await UnitOfWork.UnitProducts.FindAsync(x => x.UnitId == unitId);
+            var stockDict = stockRecords.ToDictionary(k => k.ProductId, v => v.StockQuantity ?? 0);
+
+            AllItems = products.Select(p => new InventoryItemViewModel
+            {
+                ProductId = p.Id,
+                ProductName = p.Name,
+                SKU = p.SKU,
+                CategoryName = p.Category?.Name ?? "-",
+                TrackStock = p.TrackStock,
+                Quantity = stockDict.ContainsKey(p.Id) ? stockDict[p.Id] : 0
+            }).ToList();
+
+            FilteredItems = AllItems;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Error loading inventory", Severity.Error);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void OnSearch(string text)
+    {
+        searchString = text;
+        if (string.IsNullOrWhiteSpace(searchString))
+        {
+            FilteredItems = AllItems;
+        }
+        else
+        {
+            FilteredItems = AllItems.Where(x =>
+                x.ProductName.Contains(searchString, StringComparison.OrdinalIgnoreCase) ||
+                (x.SKU != null && x.SKU.Contains(searchString))
+            ).ToList();
+        }
+    }
+
+    private async Task OpenAdjustmentDialog(InventoryItemViewModel item)
+    {
+        var parameters = new DialogParameters();
+        parameters.Add("ProductName", item.ProductName);
+        parameters.Add("CurrentQuantity", item.Quantity);
+        parameters.Add("ProductId", item.ProductId);
+        parameters.Add("UnitId", PosState.CurrentUnit.Id);
+
+        var dialog = DialogService.Show<StockAdjustmentDialog>("Update Stock", parameters);
+        var result = await dialog.Result;
+
+        if (!result.Canceled)
+        {
+            await LoadData();
+        }
+    }
+
+    // [NEW] Open History Dialog
+    private void OpenHistoryDialog(InventoryItemViewModel item)
+    {
+        var parameters = new DialogParameters();
+        parameters.Add("ProductId", item.ProductId);
+        parameters.Add("UnitId", PosState.CurrentUnit.Id);
+        parameters.Add("ProductName", item.ProductName);
+
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
+        DialogService.Show<StockHistoryDialog>("Stock History", parameters, options);
+    }
+
+    public class InventoryItemViewModel
+    {
+        public string ProductId { get; set; }
+        public string ProductName { get; set; }
+        public string? SKU { get; set; }
+        public string CategoryName { get; set; }
+        public bool TrackStock { get; set; }
+        public long Quantity { get; set; }
+    }
+}

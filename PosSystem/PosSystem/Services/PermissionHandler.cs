@@ -73,20 +73,24 @@ namespace PosSystem.Services
         {
             _contextFactory = contextFactory;
         }
-
         protected override async Task HandleRequirementAsync(AuthorizationHandlerContext context, PermissionRequirement requirement)
         {
             if (context.User?.Identity?.IsAuthenticated != true) return;
 
-            // Query the Database DIRECTLY. 
-            // This bypasses the need for RoleManager and ITenantService entirely.
             await using var dbContext = await _contextFactory.CreateDbContextAsync();
 
+            // 1. Get user roles from the claims in the cookie
             var userRoles = context.User.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList();
+
+            // DEBUG: Uncomment the line below to see if roles are actually being read from the cookie
+            // Console.WriteLine($"Checking {requirement.Permission} for roles: {string.Join(", ", userRoles)}");
+
             if (!userRoles.Any()) return;
 
-            // We check the RoleClaims table directly for the "Permission" claim type
-            var hasPermission = await (from role in dbContext.Roles
+            // 2. [FIX]: Add .IgnoreQueryFilters() to the Roles query.
+            // This allows the check to find Global Roles (TenantId = NULL) 
+            // while the user is inside their tenant "sandbox".
+            var hasPermission = await (from role in dbContext.Roles.IgnoreQueryFilters()
                                        join claim in dbContext.RoleClaims on role.Id equals claim.RoleId
                                        where userRoles.Contains(role.Name)
                                        && claim.ClaimType == "Permission"
@@ -98,5 +102,29 @@ namespace PosSystem.Services
                 context.Succeed(requirement);
             }
         }
+        //protected override async Task HandleRequirementAsync(AuthorizationHandlerContext context, PermissionRequirement requirement)
+        //{
+        //    if (context.User?.Identity?.IsAuthenticated != true) return;
+
+        //    // Query the Database DIRECTLY. 
+        //    // This bypasses the need for RoleManager and ITenantService entirely.
+        //    await using var dbContext = await _contextFactory.CreateDbContextAsync();
+
+        //    var userRoles = context.User.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList();
+        //    if (!userRoles.Any()) return;
+
+        //    // We check the RoleClaims table directly for the "Permission" claim type
+        //    var hasPermission = await (from role in dbContext.Roles
+        //                               join claim in dbContext.RoleClaims on role.Id equals claim.RoleId
+        //                               where userRoles.Contains(role.Name)
+        //                               && claim.ClaimType == "Permission"
+        //                               && claim.ClaimValue == requirement.Permission
+        //                               select claim).AnyAsync();
+
+        //    if (hasPermission)
+        //    {
+        //        context.Succeed(requirement);
+        //    }
+        //}
     }
 }

@@ -1,0 +1,183 @@
+﻿@using System.ComponentModel.DataAnnotations
+@using PosSystem.Data.Entities
+@using PosSystem.Services
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PosSystem.Data
+
+@inject TerminologyService Terminology
+@inject IUnitOfWork UnitOfWork
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="form" Model="@Model">
+            <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-4">
+
+                @* --- TAB 1: BASIC DETAILS --- *@
+                <MudTabPanel Text="Details">
+                    <MudGrid>
+                        @* Name *@
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="Model.Name"
+                                          Label="@($"{Terminology.GetText("Label_Product")} Name")"
+                                          Required="true"
+                                          Variant="Variant.Outlined" />
+                        </MudItem>
+
+                        @* Category *@
+                        <MudItem xs="12" sm="6">
+                            <MudSelect T="string" Label="@Terminology.GetText("Label_Category", "Category")"
+                                       @bind-Value="Model.CategoryId"
+                                       Variant="Variant.Outlined"
+                                       AnchorOrigin="Origin.BottomCenter">
+                                @foreach (var cat in Categories)
+                                {
+                                    <MudSelectItem Value="@cat.Id">@cat.Name</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+
+                        @* Price *@
+                        <MudItem xs="12" sm="6">
+                            <MudNumericField @bind-Value="Model.BasePrice"
+                                             Label="Base Price"
+                                             Format="N2"
+                                             Variant="Variant.Outlined"
+                                             Adornment="Adornment.Start"
+                                             AdornmentText="@CurrencySymbol" />
+                        </MudItem>
+
+                        @* SKU *@
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="Model.SKU"
+                                          Label="SKU / Barcode"
+                                          Variant="Variant.Outlined" />
+                        </MudItem>
+                    </MudGrid>
+                </MudTabPanel>
+
+                @* --- TAB 2: AVAILABILITY (New Easy Interface) --- *@
+                <MudTabPanel Text="Availability">
+                    <MudText Typo="Typo.body2" Class="mb-2 text-muted">
+                        Select which @Terminology.GetText("Label_Unit", "Units") can sell this item:
+                    </MudText>
+
+                    @if (AllUnits.Any())
+                    {
+                        <MudGrid>
+                            @foreach (var unit in AllUnits)
+                            {
+                                <MudItem xs="12" sm="6">
+                                    <MudCheckBox T="bool"
+                                                 Value="@SelectedUnitIds.Contains(unit.Id)"
+                                                 ValueChanged="@((val) => ToggleUnit(val, unit.Id))"
+                                                 Color="Color.Primary"
+                                                 Label="@unit.Name" />
+                                </MudItem>
+                            }
+                        </MudGrid>
+                    }
+                    else
+                    {
+                        <MudAlert Severity="Severity.Warning">
+                            No Units found. Please create Units in "Admin > Units" first.
+                        </MudAlert>
+                    }
+                </MudTabPanel>
+
+                @* --- TAB 3: INVENTORY --- *@
+                <MudTabPanel Text="Inventory">
+                    <MudGrid>
+                        <MudItem xs="12" sm="6">
+                            <MudSwitch @bind-Value="Model.IsPosVisible"
+                                       Color="Color.Success"
+                                       Label="Visible in POS Menu?" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudSwitch @bind-Value="Model.TrackStock"
+                                       Color="Color.Warning"
+                                       Label="Track Quantity?" />
+                        </MudItem>
+
+                        @if (Model.TrackStock)
+                        {
+                            <MudItem xs="12">
+                                <MudNumericField @bind-Value="Model.StockQuantity"
+                                                 Label="Current Stock Quantity"
+                                                 Variant="Variant.Outlined"
+                                                 Min="0" />
+                            </MudItem>
+                        }
+                    </MudGrid>
+                </MudTabPanel>
+
+            </MudTabs>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">Save Product</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public Product Model { get; set; } = new();
+
+    private MudForm form = default!;
+    private List<ItemCategory> Categories = new();
+    private List<Unit> AllUnits = new();
+
+    // To track checked units
+    private HashSet<string> SelectedUnitIds = new();
+
+    private string CurrencySymbol = "$";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Categories = (await UnitOfWork.Categories.GetAllAsync()).ToList();
+        AllUnits = (await UnitOfWork.Units.GetAllAsync()).ToList();
+        CurrencySymbol = Terminology.GetText("CurrencySymbol", "$");
+
+        // If editing, load existing connections
+        if (!string.IsNullOrEmpty(Model.Id))
+        {
+            var existingLinks = await UnitOfWork.UnitProducts.FindAsync(up => up.ProductId == Model.Id);
+            foreach (var link in existingLinks)
+            {
+                SelectedUnitIds.Add(link.UnitId);
+            }
+        }
+    }
+
+    private void ToggleUnit(bool isChecked, string unitId)
+    {
+        if (isChecked) SelectedUnitIds.Add(unitId);
+        else SelectedUnitIds.Remove(unitId);
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (form.IsValid)
+        {
+            // Pass back BOTH the Product and the List of Selected Units
+            MudDialog.Close(DialogResult.Ok(new ProductDialogResult
+            {
+                Product = Model,
+                SelectedUnitIds = SelectedUnitIds.ToList()
+            }));
+        }
+    }
+
+    // Simple helper class to transfer data back to the parent page
+    public class ProductDialogResult
+    {
+        public Product Product { get; set; } = new();
+        public List<string> SelectedUnitIds { get; set; } = new();
+    }
+}

@@ -1,0 +1,160 @@
+﻿@using PosSystem.Data.Entities
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.AspNetCore.Components.Authorization
+@using System.Security.Claims
+@using PosSystem.Services
+
+@inject IUnitOfWork UnitOfWork
+@inject ISnackbar Snackbar
+@inject StockService StockService
+@inject AuthenticationStateProvider AuthStateProvider
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.h6" Class="mb-2">@ProductName</MudText>
+        <MudDivider Class="mb-4" />
+
+        <MudGrid>
+            @* Left: Current Status *@
+            <MudItem xs="12" sm="6">
+                <MudPaper Class="pa-3 mud-theme-surface" Elevation="0" Outlined="true">
+                    <MudText Typo="Typo.caption">Current Stock</MudText>
+                    <MudText Typo="Typo.h4">@CurrentQuantity</MudText>
+                </MudPaper>
+            </MudItem>
+
+            @* Right: New Total Preview *@
+            <MudItem xs="12" sm="6">
+                <MudPaper Class="pa-3 mud-theme-surface" Elevation="0" Outlined="true">
+                    <MudText Typo="Typo.caption">After Adjustment</MudText>
+                    <MudText Typo="Typo.h4" Color="@(GetNewTotal() < 0 ? Color.Error : Color.Success)">
+                        @GetNewTotal()
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+
+            @* Operation Type *@
+            <MudItem xs="12" Class="mt-2">
+                <MudToggleGroup T="string" @bind-Value="Operation" Outline="true" Color="Color.Primary" Style="width:100%">
+                    <MudToggleItem Value="@("Add")">ADD STOCK (+)</MudToggleItem>
+                    <MudToggleItem Value="@("Remove")">REMOVE STOCK (-)</MudToggleItem>
+                    <MudToggleItem Value="@("Set")">SET EXACT COUNT (=)</MudToggleItem>
+                </MudToggleGroup>
+            </MudItem>
+
+            @* Input Field *@
+            <MudItem xs="12">
+                <MudNumericField @bind-Value="AdjustmentValue" Label="Quantity" Variant="Variant.Outlined"
+                                 Min="0" Immediate="true" Class="mb-2" AutoFocus="true" />
+            </MudItem>
+
+            @* Reason (Now Required for Audit Log) *@
+            <MudItem xs="12">
+                <MudTextField @bind-Value="Reason" Label="Reason / Note" Placeholder="e.g. Weekly Restock, Damaged Goods" Variant="Variant.Outlined" Required="true" />
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SaveAdjustment">Update Stock</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; }
+
+    [Parameter] public string ProductId { get; set; }
+    [Parameter] public string UnitId { get; set; }
+    [Parameter] public string ProductName { get; set; }
+    [Parameter] public long CurrentQuantity { get; set; }
+
+    private string Operation = "Add"; // Default to Add
+    private int AdjustmentValue = 0;
+    private string Reason = "";
+
+    private long GetNewTotal()
+    {
+        return Operation switch
+        {
+            "Add" => CurrentQuantity + AdjustmentValue,
+            "Remove" => CurrentQuantity - AdjustmentValue,
+            "Set" => AdjustmentValue,
+            _ => CurrentQuantity
+        };
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task SaveAdjustment()
+    {
+        // 1. Validation
+        if (AdjustmentValue < 0)
+        {
+            Snackbar.Add("Quantity cannot be negative", Severity.Warning);
+            return;
+        }
+
+        // Optional: Force a reason to be typed
+        if (string.IsNullOrWhiteSpace(Reason))
+        {
+            // You can enforce this if you want strict audit logs
+            // Snackbar.Add("Please provide a reason.", Severity.Warning);
+            // return;
+        }
+
+        try
+        {
+            // 2. Calculate the actual CHANGE amount (Delta)
+            // The Service expects "How much did it change by?" (+5 or -5), not the final total.
+            long change = 0;
+
+            if (Operation == "Add")
+            {
+                change = AdjustmentValue;
+            }
+            else if (Operation == "Remove")
+            {
+                change = -AdjustmentValue;
+            }
+            else if (Operation == "Set")
+            {
+                change = AdjustmentValue - CurrentQuantity;
+            }
+
+            // If no change, just close
+            if (change == 0)
+            {
+                MudDialog.Cancel();
+                return;
+            }
+
+            // 3. Get Current User ID for the Log
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var user = authState.User;
+            var userId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "Unknown";
+
+            // 4. Call StockService
+            // This prepares the inventory update AND creates the log entry
+            await StockService.AdjustStockAsync(
+                UnitId,
+                ProductId,
+                change,
+                "Adjustment", // Type
+                Reason,
+                userId
+            );
+
+            // 5. Commit Transaction (Save both changes at once)
+            await UnitOfWork.CompleteAsync();
+
+            Snackbar.Add($"Stock updated successfully", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Failed to update stock: " + ex.Message, Severity.Error);
+            Console.WriteLine(ex.ToString());
+        }
+    }
+}

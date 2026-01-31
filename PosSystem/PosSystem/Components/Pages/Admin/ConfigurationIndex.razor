@@ -1,0 +1,142 @@
+﻿@page "/admin/configurations"
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Data.Entities
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.EntityFrameworkCore
+@using PosSystem.Data
+
+@* Only Super Admins can view this master list *@
+@attribute [Authorize(Policy = "Permissions.Terminology.View")]
+
+@inject IUnitOfWork UnitOfWork
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject NavigationManager Navigation
+
+<PageTitle>System Configurations</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudText Typo="Typo.h5" Class="mb-4">Global Terminology Overview</MudText>
+    <MudText Typo="Typo.body2" Class="mb-4 text-muted">
+        View and manage language settings for all tenants from a single location.
+    </MudText>
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        @* FIX 1: Add Context="config" to rename the row variable *@
+        <MudTable Items="@ConfigList" Hover="true" Striped="true" Elevation="2" Context="config">
+            <HeaderContent>
+                <MudTh>Tenant Name</MudTh>
+                <MudTh>Business Type</MudTh>
+                <MudTh>Product Label</MudTh>
+                <MudTh>Category Label</MudTh>
+                <MudTh>Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Tenant">
+                    @* FIX 2: Use @config instead of @context *@
+                    <MudText Typo="Typo.body1" Style="font-weight:bold;">@config.TenantName</MudText>
+                    <MudText Typo="Typo.caption">@config.TenantPlan</MudText>
+                </MudTd>
+                <MudTd DataLabel="Business Type">
+                    @if (!string.IsNullOrEmpty(config.BusinessType))
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Text">@config.BusinessType</MudChip>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Class="text-muted">Not Set</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Product Label">
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary">@config.ProductTerm</MudChip>
+                </MudTd>
+                <MudTd DataLabel="Category Label">
+                    <MudChip T="string" Size="Size.Small" Color="Color.Secondary">@config.CategoryTerm</MudChip>
+                </MudTd>
+                <MudTd>
+                    @* FIX 3: Rename inner context to avoid any leftover ambiguity (optional but safe) *@
+                    <AuthorizeView Policy="Permissions.Terminology.Edit" Context="authContext">
+                        <Authorized>
+                            <MudButton Variant="Variant.Outlined"
+                                       Color="Color.Primary"
+                                       Size="Size.Small"
+                                       OnClick="@(() => NavigateToEdit(config.TenantId))">
+                                Configure
+                            </MudButton>
+                        </Authorized>
+                    </AuthorizeView>
+                </MudTd>
+            </RowTemplate>
+            <PagerContent>
+                <MudTablePager />
+            </PagerContent>
+        </MudTable>
+    }
+</MudContainer>
+
+@code {
+    private bool isLoading = true;
+    private List<ConfigViewModel> ConfigList = new();
+
+    private class ConfigViewModel
+    {
+        public string TenantId { get; set; } = "";
+        public string TenantName { get; set; } = "";
+        public string TenantPlan { get; set; } = "";
+        public string BusinessType { get; set; } = "";
+        public string ProductTerm { get; set; } = "Product";
+        public string CategoryTerm { get; set; } = "Category";
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        try
+        {
+            using var context = await DbFactory.CreateDbContextAsync();
+
+            var tenants = await context.Tenants
+                .Include(t => t.BusinessCategory)
+                .AsNoTracking()
+                .ToListAsync();
+
+            var allTerms = await context.TenantTerminologies.AsNoTracking().ToListAsync();
+
+            ConfigList = tenants.Select(t =>
+            {
+                var myTerms = allTerms.Where(term => term.TenantId == t.Id).ToList();
+
+                return new ConfigViewModel
+                {
+                    TenantId = t.Id,
+                    TenantName = t.Name,
+                    TenantPlan = t.PlanType ?? "N/A",
+                    BusinessType = t.BusinessCategory?.Name ?? "",
+                    ProductTerm = myTerms.FirstOrDefault(x => x.TermKey == "Label_Product")?.TermValue ?? "Product",
+                    CategoryTerm = myTerms.FirstOrDefault(x => x.TermKey == "Label_Category")?.TermValue ?? "Category"
+                };
+            }).ToList();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void NavigateToEdit(string tenantId)
+    {
+        // Currently directs to the settings page.
+        // Ideally, you'd pass the ID, but since our settings page logic handles selection
+        // via a dropdown for Admins, this is a starting point.
+        Navigation.NavigateTo("/admin/settings/terminology");
+    }
+}

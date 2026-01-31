@@ -1,0 +1,245 @@
+﻿@page "/catalog/products"
+@using PosSystem.Data.Entities
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Services
+@using PosSystem.Components.Pages.Catalog.Products
+
+@attribute [Authorize(Policy = "Permissions.Products.View")]
+
+@inject IUnitOfWork UnitOfWork
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject TerminologyService Terminology
+@inject ITenantService TenantService
+
+<PageTitle>@Terminology.GetText("Label_Product", "Product") Management</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <div class="d-flex justify-space-between align-center mb-4">
+        <MudText Typo="Typo.h5">
+            Manage @Terminology.GetText("Label_Product", "Products")
+        </MudText>
+
+        <AuthorizeView Policy="Permissions.Products.Create">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="CreateAsync">
+                Add New @Terminology.GetText("Label_Product", "Product")
+            </MudButton>
+        </AuthorizeView>
+    </div>
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        <MudTable Items="@products" Hover="true" Striped="true" Elevation="2" Context="product">
+            <HeaderContent>
+                <MudTh>Status</MudTh>
+                <MudTh>Name</MudTh>
+                <MudTh>@Terminology.GetText("Label_Category", "Category")</MudTh>
+                <MudTh>Price</MudTh>
+                <MudTh>Stock</MudTh>
+                <MudTh>Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>
+                    @if (product.IsPosVisible)
+                    {
+                        <MudTooltip Text="Visible in POS Menu">
+                            <MudIcon Icon="@Icons.Material.Filled.Store" Color="Color.Success" Size="Size.Small" />
+                        </MudTooltip>
+                    }
+                    else
+                    {
+                        <MudTooltip Text="Internal / Admin Only">
+                            <MudIcon Icon="@Icons.Material.Filled.VisibilityOff" Color="Color.Default" Size="Size.Small" />
+                        </MudTooltip>
+                    }
+                </MudTd>
+
+                <MudTd DataLabel="Name">
+                    <MudText Typo="Typo.body1" Style="font-weight:500;">@product.Name</MudText>
+                    @if (!string.IsNullOrEmpty(product.SKU))
+                    {
+                        <MudText Typo="Typo.caption" Class="text-muted">SKU: @product.SKU</MudText>
+                    }
+                </MudTd>
+
+                <MudTd DataLabel="Category">
+                    @if (product.Category != null)
+                    {
+                        <MudChip T="string" Size="Size.Small" Style="@($"background-color:{product.Category.ColorCode}; color:white;")">
+                            @product.Category.Name
+                        </MudChip>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Class="text-muted">Uncategorized</MudText>
+                    }
+                </MudTd>
+
+                <MudTd DataLabel="Price">
+                    <MudText Typo="Typo.body2">
+                        <b>@CurrencySymbol</b> @product.BasePrice.ToString("N2")
+                    </MudText>
+                </MudTd>
+
+                <MudTd DataLabel="Stock">
+                    @if (product.TrackStock)
+                    {
+                        @if (product.StockQuantity < 5)
+                        {
+                            <MudChip T="string" Color="Color.Error" Size="Size.Small" Variant="Variant.Filled">Low: @product.StockQuantity</MudChip>
+                        }
+                        else
+                        {
+                            <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Outlined">@product.StockQuantity</MudChip>
+                        }
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Class="text-muted">-</MudText>
+                    }
+                </MudTd>
+
+                <MudTd>
+                    <AuthorizeView Policy="Permissions.Products.Edit" Context="authContext">
+                        <Authorized>
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small" OnClick="@(() => EditAsync(product))" />
+                        </Authorized>
+                    </AuthorizeView>
+                    <AuthorizeView Policy="Permissions.Products.Delete" Context="authContext">
+                        <Authorized>
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="@(() => DeleteAsync(product))" />
+                        </Authorized>
+                    </AuthorizeView>
+                </MudTd>
+            </RowTemplate>
+            <PagerContent>
+                <MudTablePager />
+            </PagerContent>
+        </MudTable>
+    }
+</MudContainer>
+
+@code {
+    private IEnumerable<Product> products = new List<Product>();
+    private bool isLoading = true;
+    private string currentTenantId = "";
+    private string CurrencySymbol = "$";
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentTenantId = TenantService.GetTenantId();
+        CurrencySymbol = Terminology.GetText("CurrencySymbol", "$");
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        // Note: Repository fix for Includes still pending, but this loads basic data
+        products = await UnitOfWork.Products.GetAllAsync();
+        isLoading = false;
+    }
+
+    private async Task CreateAsync()
+    {
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+        var newProduct = new Product { TenantId = currentTenantId, IsPosVisible = true, TrackStock = false };
+
+        var parameters = new DialogParameters { ["Model"] = newProduct };
+
+        var dialog = await DialogService.ShowAsync<ProductDialog>($"Add {Terminology.GetText("Label_Product")}", parameters, options);
+        var result = await dialog.Result;
+
+        // [CHANGE] Check for the specific result type
+        if (!result.Canceled && result.Data is ProductDialog.ProductDialogResult resultData)
+        {
+            // 1. Save Product first to get ID
+            var data = resultData.Product;
+            data.Id = Guid.NewGuid().ToString();
+            data.TenantId = currentTenantId;
+
+            await UnitOfWork.Products.AddAsync(data);
+            await UnitOfWork.CompleteAsync();
+
+            // 2. Save Availability Links
+            await UpdateUnitLinks(data.Id, resultData.SelectedUnitIds);
+
+            Snackbar.Add("Created successfully!", Severity.Success);
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task EditAsync(Product product)
+    {
+        var parameters = new DialogParameters { ["Model"] = product };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+
+        var dialog = await DialogService.ShowAsync<ProductDialog>("Edit Item", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled && result.Data is ProductDialog.ProductDialogResult resultData)
+        {
+            // 1. Update Product
+            UnitOfWork.Products.Update(resultData.Product);
+
+            // 2. Update Availability Links
+            await UpdateUnitLinks(resultData.Product.Id, resultData.SelectedUnitIds);
+
+            await UnitOfWork.CompleteAsync();
+            Snackbar.Add("Updated successfully!", Severity.Success);
+            await LoadDataAsync();
+        }
+    }
+
+    // [NEW] Helper to handle adding/removing UnitProduct links
+    private async Task UpdateUnitLinks(string productId, List<string> selectedUnitIds)
+    {
+        // Get existing links from DB
+        var existingLinks = (await UnitOfWork.UnitProducts.FindAsync(x => x.ProductId == productId)).ToList();
+
+        // A. Add new ones
+        foreach (var unitId in selectedUnitIds)
+        {
+            if (!existingLinks.Any(x => x.UnitId == unitId))
+            {
+                await UnitOfWork.UnitProducts.AddAsync(new UnitProduct
+                {
+                    TenantId = currentTenantId,
+                    ProductId = productId,
+                    UnitId = unitId
+                });
+            }
+        }
+
+        // B. Remove unchecked ones
+        foreach (var link in existingLinks)
+        {
+            if (!selectedUnitIds.Contains(link.UnitId))
+            {
+                UnitOfWork.UnitProducts.Remove(link);
+            }
+        }
+
+        await UnitOfWork.CompleteAsync();
+    }
+
+    private async Task DeleteAsync(Product product)
+    {
+        bool? confirm = await DialogService.ShowMessageBox("Warning", "Delete this item?", yesText: "Delete", cancelText: "Cancel");
+        if (confirm == true)
+        {
+            UnitOfWork.Products.Remove(product);
+            await UnitOfWork.CompleteAsync();
+            Snackbar.Add("Deleted!", Severity.Warning);
+            await LoadDataAsync();
+        }
+    }
+}

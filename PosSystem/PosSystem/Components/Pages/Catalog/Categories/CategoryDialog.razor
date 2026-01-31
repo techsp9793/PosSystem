@@ -1,0 +1,64 @@
+﻿@using System.ComponentModel.DataAnnotations
+@using MudBlazor.Utilities
+@using PosSystem.Data.Entities
+@using PosSystem.Services
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.AspNetCore.Authorization
+
+@inject TerminologyService Terminology
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="form" Model="@Model">
+            <MudGrid>
+                @* Dynamic Label: e.g., "Zone Name" or "Category Name" *@
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="Model.Name"
+                                  Label="@($"{Terminology.GetText("Label_Category")} Name")"
+                                  Required="true"
+                                  Variant="Variant.Outlined" />
+                </MudItem>
+
+                @* Color Picker for POS Buttons *@
+                <MudItem xs="12">
+                    <MudColorPicker Label="Button Color (for POS)"
+                                    @bind-Text="Model.ColorCode"
+                                    Style="width: 100%;"
+                                    Placeholder="Select Color"
+                                    Palette="Palette"
+                                    DisableAlpha="true" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public ItemCategory Model { get; set; } = new();
+
+    private MudForm form = default!;
+
+    // Simple palette for quick selection
+    private IEnumerable<MudColor> Palette { get; set; } = new[]
+    {
+        new MudColor("#2196F3"), new MudColor("#4CAF50"), new MudColor("#FFC107"),
+        new MudColor("#FF5722"), new MudColor("#9C27B0"), new MudColor("#607D8B")
+    };
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (form.IsValid)
+        {
+            MudDialog.Close(DialogResult.Ok(Model));
+        }
+    }
+}

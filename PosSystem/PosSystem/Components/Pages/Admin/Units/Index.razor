@@ -1,0 +1,138 @@
+﻿@page "/admin/units"
+@using PosSystem.Data.Entities
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Services
+@using PosSystem.Components.Pages.Admin.Units
+
+@attribute [Authorize(Policy = "Permissions.Units.View")]
+
+@inject IUnitOfWork UnitOfWork
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject TerminologyService Terminology
+@inject ITenantService TenantService
+
+<PageTitle>@Terminology.GetText("Label_Unit", "Unit") Management</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <div class="d-flex justify-space-between align-center mb-4">
+        <MudText Typo="Typo.h5">
+            Manage @Terminology.GetText("Label_Unit", "Units")
+        </MudText>
+
+        <AuthorizeView Policy="Permissions.Units.Create">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="CreateAsync">
+                Add New @Terminology.GetText("Label_Unit", "Unit")
+            </MudButton>
+        </AuthorizeView>
+    </div>
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        <MudTable Items="@units" Hover="true" Striped="true" Elevation="2" Context="unit">
+            <HeaderContent>
+                <MudTh>Name</MudTh>
+                <MudTh>Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Name">
+                    <MudText Typo="Typo.body1" Style="font-weight:500;">@unit.Name</MudText>
+                </MudTd>
+                <MudTd>
+                    <AuthorizeView Policy="Permissions.Units.Edit" Context="authContext">
+                        <Authorized>
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small" OnClick="@(() => EditAsync(unit))" />
+                        </Authorized>
+                    </AuthorizeView>
+                    <AuthorizeView Policy="Permissions.Units.Delete" Context="authContext">
+                        <Authorized>
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="@(() => DeleteAsync(unit))" />
+                        </Authorized>
+                    </AuthorizeView>
+                </MudTd>
+            </RowTemplate>
+            <PagerContent>
+                <MudTablePager />
+            </PagerContent>
+        </MudTable>
+    }
+</MudContainer>
+
+@code {
+    private IEnumerable<Unit> units = new List<Unit>();
+    private bool isLoading = true;
+    private string currentTenantId = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentTenantId = TenantService.GetTenantId();
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        units = await UnitOfWork.Units.GetAllAsync();
+        isLoading = false;
+    }
+
+    private async Task CreateAsync()
+    {
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var newUnit = new Unit { TenantId = currentTenantId };
+
+        var parameters = new DialogParameters { ["Model"] = newUnit };
+
+        var dialog = await DialogService.ShowAsync<UnitDialog>($"Add {Terminology.GetText("Label_Unit")}", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled && result.Data is Unit data)
+        {
+            data.Id = Guid.NewGuid().ToString();
+            data.TenantId = currentTenantId;
+
+            await UnitOfWork.Units.AddAsync(data);
+            await UnitOfWork.CompleteAsync();
+
+            Snackbar.Add("Created successfully!", Severity.Success);
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task EditAsync(Unit unit)
+    {
+        var parameters = new DialogParameters { ["Model"] = unit };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+
+        var dialog = await DialogService.ShowAsync<UnitDialog>("Edit Unit", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled)
+        {
+            UnitOfWork.Units.Update(unit);
+            await UnitOfWork.CompleteAsync();
+            Snackbar.Add("Updated successfully!", Severity.Success);
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task DeleteAsync(Unit unit)
+    {
+        bool? confirm = await DialogService.ShowMessageBox("Warning", "Delete this unit?", yesText: "Delete", cancelText: "Cancel");
+        if (confirm == true)
+        {
+            UnitOfWork.Units.Remove(unit);
+            await UnitOfWork.CompleteAsync();
+            Snackbar.Add("Deleted!", Severity.Warning);
+            await LoadDataAsync();
+        }
+    }
+}

@@ -1,0 +1,111 @@
+﻿@using PosSystem.Data.Entities
+@using PosSystem.Data.Repositories.Interfaces
+@inject IUnitOfWork UnitOfWork
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.h6">History: @ProductName</MudText>
+        <MudDivider Class="mb-4" />
+
+        @if (isLoading)
+        {
+            <div class="d-flex justify-center pa-4">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else if (!Movements.Any())
+        {
+            <MudAlert Severity="Severity.Info">No movement history found for this item.</MudAlert>
+        }
+        else
+        {
+            <MudTable Items="@Movements" Dense="true" Hover="true" Striped="true" FixedHeader="true" Height="400px">
+                <HeaderContent>
+                    <MudTh>Date</MudTh>
+                    <MudTh>Type</MudTh>
+                    <MudTh>Change</MudTh>
+                    <MudTh>Balance</MudTh>
+                    <MudTh>Reason</MudTh>
+                    <MudTh>User</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Date">
+                        <MudText Typo="Typo.caption">@context.CreatedAt.ToLocalTime().ToString("MMM dd, HH:mm")</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Type">
+                        @if (context.Type == "Sale")
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Text">SALE</MudChip>
+                        }
+                        else if (context.Type == "Adjustment")
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Text">ADJUST</MudChip>
+                        }
+                        else
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Text">@context.Type.ToUpper()</MudChip>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Change" Style="font-weight:bold">
+                        <MudText Color="@(context.QuantityChanged > 0 ? Color.Success : Color.Error)">
+                            @(context.QuantityChanged > 0 ? "+" : "")@context.QuantityChanged
+                        </MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Balance">@context.StockAfter</MudTd>
+                    <MudTd DataLabel="Reason" Style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                        @context.Reason
+                    </MudTd>
+                    <MudTd DataLabel="User">
+                        <MudText Typo="Typo.caption">@(string.IsNullOrEmpty(context.UserId) ? "System" : "User")</MudText>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; }
+
+    [Parameter] public string ProductId { get; set; }
+    [Parameter] public string UnitId { get; set; }
+    [Parameter] public string ProductName { get; set; }
+
+    private List<StockMovement> Movements = new();
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadHistory();
+    }
+
+    private async Task LoadHistory()
+    {
+        isLoading = true;
+        try
+        {
+            // Fetch records from the database
+            // Note: In a real app with millions of rows, you'd use pagination here.
+            var allMoves = await UnitOfWork.StockMovements
+                .FindAsync(x => x.UnitId == UnitId && x.ProductId == ProductId);
+
+            Movements = allMoves
+                .OrderByDescending(x => x.CreatedAt) // Newest first
+                .Take(50) // Limit to last 50 for performance
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

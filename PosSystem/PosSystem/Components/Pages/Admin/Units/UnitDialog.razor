@@ -1,0 +1,71 @@
+﻿@using System.ComponentModel.DataAnnotations
+@using PosSystem.Data.Entities
+@using PosSystem.Services
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PosSystem.Data
+
+@inject TerminologyService Terminology
+@inject IUnitOfWork UnitOfWork
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="form" Model="@Model">
+            <MudGrid>
+                @* 1. Unit Name *@
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="Model.Name"
+                                  Label="@($"{Terminology.GetText("Label_Unit", "Unit")} Name")"
+                                  Required="true"
+                                  Variant="Variant.Outlined" />
+                </MudItem>
+
+                @* 2. Unit Type Selection (THE MISSING LINK) *@
+                <MudItem xs="12">
+                    <MudSelect T="string" Label="Unit Type"
+                               @bind-Value="Model.UnitTypeId"
+                               Variant="Variant.Outlined"
+                               Required="true"
+                               RequiredError="You must select a type (e.g. Store, Kitchen)"
+                               AnchorOrigin="Origin.BottomCenter">
+                        @foreach (var type in UnitTypes)
+                        {
+                            <MudSelectItem Value="@type.Id">@type.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public Unit Model { get; set; } = new();
+
+    private MudForm form = default!;
+    private List<UnitType> UnitTypes = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Load the list of Types (e.g. "Store", "Kitchen")
+        UnitTypes = (await UnitOfWork.UnitTypes.GetAllAsync()).ToList();
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (form.IsValid)
+        {
+            MudDialog.Close(DialogResult.Ok(Model));
+        }
+    }
+}

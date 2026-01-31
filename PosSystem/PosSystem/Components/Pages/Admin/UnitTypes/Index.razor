@@ -1,0 +1,149 @@
+﻿@page "/admin/unit-types"
+@using PosSystem.Data.Entities
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Services
+@using PosSystem.Components.Pages.Admin.UnitTypes
+
+@* Use existing permissions, or create specific ones if you prefer *@
+@attribute [Authorize(Policy = "Permissions.UnitTypes.View")]
+
+@inject IUnitOfWork UnitOfWork
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject ITenantService TenantService
+
+<PageTitle>Unit Type Management</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <div class="d-flex justify-space-between align-center mb-4">
+        <MudText Typo="Typo.h5">
+            Manage Unit Types
+        </MudText>
+
+        <AuthorizeView Policy="Permissions.UnitTypes.Create">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="CreateAsync">
+                Add New Type
+            </MudButton>
+        </AuthorizeView>
+    </div>
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        <MudTable Items="@types" Hover="true" Striped="true" Elevation="2" Context="type">
+            <HeaderContent>
+                <MudTh>Name</MudTh>
+                <MudTh>Description</MudTh>
+                <MudTh>Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Name">
+                    <MudText Typo="Typo.body1" Style="font-weight:500;">@type.Name</MudText>
+                </MudTd>
+                <MudTd DataLabel="Description">@type.Description</MudTd>
+                <MudTd>
+                    <AuthorizeView Policy="Permissions.UnitTypes.Edit" Context="authContext">
+                        <Authorized>
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small" OnClick="@(() => EditAsync(type))" />
+                        </Authorized>
+                    </AuthorizeView>
+                    <AuthorizeView Policy="Permissions.UnitTypes.Delete" Context="authContext">
+                        <Authorized>
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="@(() => DeleteAsync(type))" />
+                        </Authorized>
+                    </AuthorizeView>
+                </MudTd>
+            </RowTemplate>
+            <PagerContent>
+                <MudTablePager />
+            </PagerContent>
+        </MudTable>
+    }
+</MudContainer>
+
+@code {
+    private IEnumerable<UnitType> types = new List<UnitType>();
+    private bool isLoading = true;
+    private string currentTenantId = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentTenantId = TenantService.GetTenantId();
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        types = await UnitOfWork.UnitTypes.GetAllAsync();
+        isLoading = false;
+    }
+
+    private async Task CreateAsync()
+    {
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var newType = new UnitType { TenantId = currentTenantId };
+
+        var parameters = new DialogParameters { ["Model"] = newType };
+
+        var dialog = await DialogService.ShowAsync<UnitTypeDialog>("Add Unit Type", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled && result.Data is UnitType data)
+        {
+            data.Id = Guid.NewGuid().ToString();
+            data.TenantId = currentTenantId;
+
+            await UnitOfWork.UnitTypes.AddAsync(data);
+            await UnitOfWork.CompleteAsync();
+
+            Snackbar.Add("Created successfully!", Severity.Success);
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task EditAsync(UnitType type)
+    {
+        var parameters = new DialogParameters { ["Model"] = type };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+
+        var dialog = await DialogService.ShowAsync<UnitTypeDialog>("Edit Type", parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled)
+        {
+            UnitOfWork.UnitTypes.Update(type);
+            await UnitOfWork.CompleteAsync();
+            Snackbar.Add("Updated successfully!", Severity.Success);
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task DeleteAsync(UnitType type)
+    {
+        // Optional: Check if any Units are using this type before deleting?
+        // For now, we allow deletion (database FK might throw error if in use, which is good safety)
+        bool? confirm = await DialogService.ShowMessageBox("Warning", "Delete this Type?", yesText: "Delete", cancelText: "Cancel");
+        if (confirm == true)
+        {
+            try
+            {
+                UnitOfWork.UnitTypes.Remove(type);
+                await UnitOfWork.CompleteAsync();
+                Snackbar.Add("Deleted!", Severity.Warning);
+                await LoadDataAsync();
+            }
+            catch
+            {
+                Snackbar.Add("Cannot delete: This type is being used by one or more Units.", Severity.Error);
+            }
+        }
+    }
+}

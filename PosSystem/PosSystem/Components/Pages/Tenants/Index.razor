@@ -3,24 +3,22 @@
 @using PosSystem.Data.Repositories.Interfaces
 @using Microsoft.AspNetCore.Authorization
 @using PosSystem.Components.Pages.Tenants
+@using Microsoft.EntityFrameworkCore
+@using PosSystem.Data
 
 @attribute [Authorize(Policy = "Permissions.Tenants.View")]
 @inject IUnitOfWork UnitOfWork
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
 
 <PageTitle>Tenant Management</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.False" Class="mt-4">
     <div class="d-flex justify-space-between align-center mb-4">
         <MudText Typo="Typo.h5">Tenant Management</MudText>
-
-        @* 1. CREATE PERMISSION CHECK *@
         <AuthorizeView Policy="Permissions.Tenants.Create">
-            <MudButton Variant="Variant.Filled"
-                       Color="Color.Primary"
-                       StartIcon="@Icons.Material.Filled.Add"
-                       OnClick="CreateAsync">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="CreateAsync">
                 Create Tenant
             </MudButton>
         </AuthorizeView>
@@ -39,14 +37,10 @@
                 <MudTh>Status</MudTh>
                 <MudTh>Created At</MudTh>
                 <AuthorizeView Policy="Permissions.Tenants.Edit" Context="authEdit">
-                    <Authorized>
-                        <MudTh>Actions</MudTh>
-                    </Authorized>
+                    <Authorized><MudTh>Actions</MudTh></Authorized>
                     <NotAuthorized>
                         <AuthorizeView Policy="Permissions.Tenants.Delete" Context="authDelete">
-                            <Authorized>
-                                <MudTh>Actions</MudTh>
-                            </Authorized>
+                            <Authorized><MudTh>Actions</MudTh></Authorized>
                         </AuthorizeView>
                     </NotAuthorized>
                 </AuthorizeView>
@@ -63,25 +57,17 @@
                     }
                     else
                     {
+
                         <MudChip T="string" Size="Size.Small" Color="Color.Error">Inactive</MudChip>
                     }
                 </MudTd>
                 <MudTd DataLabel="Created">@tenant.CreatedAt.ToShortDateString()</MudTd>
                 <MudTd>
-                    @* 2. EDIT PERMISSION CHECK *@
                     <AuthorizeView Policy="Permissions.Tenants.Edit">
-                        <MudIconButton Icon="@Icons.Material.Filled.Edit"
-                                       Color="Color.Primary"
-                                       Size="Size.Small"
-                                       OnClick="@(() => EditAsync(tenant))" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small" OnClick="@(() => EditAsync(tenant))" />
                     </AuthorizeView>
-
-                    @* 3. DELETE PERMISSION CHECK *@
                     <AuthorizeView Policy="Permissions.Tenants.Delete">
-                        <MudIconButton Icon="@Icons.Material.Filled.Delete"
-                                       Color="Color.Error"
-                                       Size="Size.Small"
-                                       OnClick="@(() => DeleteAsync(tenant))" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="@(() => DeleteAsync(tenant))" />
                     </AuthorizeView>
                 </MudTd>
             </RowTemplate>
@@ -114,28 +100,57 @@
         var dialog = await DialogService.ShowAsync<TenantDialog>("Create Tenant", options);
         var result = await dialog.Result;
 
-        if (!result.Canceled && result.Data is Tenant newTenant)
+        // [NEW] Logic to handle the composite result object
+        if (!result.Canceled && result.Data != null)
         {
+            // Unpack dynamic data
+            dynamic data = result.Data;
+            Tenant newTenant = data.Tenant;
+            string adminEmail = data.AdminEmail;
+            List<TenantTerminology> terms = data.Terms;
+
+            // 1. Assign ID manually to link related data
+            newTenant.Id = Guid.NewGuid().ToString();
+
+            // 2. Link Terminology to new Tenant ID
+            foreach (var term in terms)
+            {
+                term.TenantId = newTenant.Id;
+            }
+
+            // 3. Save Tenant via UnitOfWork
             await UnitOfWork.Tenants.AddAsync(newTenant);
+
+            // 4. Save Terminology via Direct Context (Transactional)
+            // (Using factory is safer for parallel ops, but here we just need to save the extras)
+            using var context = await DbFactory.CreateDbContextAsync();
+            context.TenantTerminologies.AddRange(terms);
+            await context.SaveChangesAsync();
+
+            // 5. Commit UnitOfWork
             await UnitOfWork.CompleteAsync();
 
-            Snackbar.Add("Tenant created successfully!", Severity.Success);
+            // TODO: Call your UserService to create the Admin User using 'adminEmail' here
+
+            Snackbar.Add("Tenant and configuration created successfully!", Severity.Success);
             await LoadDataAsync();
         }
     }
 
     private async Task EditAsync(Tenant tenant)
     {
-        // Use dictionary-based DialogParameters for reliability
         var parameters = new DialogParameters { ["Model"] = tenant };
         var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
-
         var dialog = await DialogService.ShowAsync<TenantDialog>("Edit Tenant", parameters, options);
         var result = await dialog.Result;
 
-        if (!result.Canceled)
+        if (!result.Canceled && result.Data != null)
         {
-            UnitOfWork.Tenants.Update(tenant);
+            // Handle Edit (usually just updates the Tenant object part)
+            dynamic data = result.Data;
+            Tenant updatedTenant = data.Tenant;
+
+            UnitOfWork.Tenants.Update(updatedTenant);
             await UnitOfWork.CompleteAsync();
 
             Snackbar.Add("Tenant updated successfully!", Severity.Success);
@@ -145,16 +160,11 @@
 
     private async Task DeleteAsync(Tenant tenant)
     {
-        bool? confirm = await DialogService.ShowMessageBox(
-            "Warning",
-            $"Are you sure you want to delete '{tenant.Name}'?",
-            yesText: "Delete", cancelText: "Cancel");
-
+        bool? confirm = await DialogService.ShowMessageBox("Warning", $"Are you sure you want to delete '{tenant.Name}'?", yesText: "Delete", cancelText: "Cancel");
         if (confirm == true)
         {
             UnitOfWork.Tenants.Remove(tenant);
             await UnitOfWork.CompleteAsync();
-
             Snackbar.Add("Tenant deleted!", Severity.Warning);
             await LoadDataAsync();
         }

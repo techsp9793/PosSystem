@@ -17,5 +17,15 @@ namespace PosSystem.Data.Entities
         public string? PlanType { get; set; }
 
         public bool IsActive { get; set; } = true;
+        public string? BusinessCategoryId { get; set; }
+
+        [ForeignKey("BusinessCategoryId")]
+        public virtual BusinessCategory? BusinessCategory { get; set; }
+
+        public string? CurrencySymbol { get; set; } = "$";
+        public string? TimeZone { get; set; } = "UTC";
+
+        // Navigation to their Units (Branches)
+        public virtual ICollection<Unit> Units { get; set; } = new List<Unit>();
     }
 }

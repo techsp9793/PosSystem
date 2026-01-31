@@ -1,0 +1,159 @@
+﻿@page "/orders"
+@using PosSystem.Data.Entities
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.AspNetCore.Authorization
+
+@* Only allow users with permission to view orders *@
+@attribute [Authorize(Policy = "Permissions.Orders.View")]
+
+@inject IUnitOfWork UnitOfWork
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject PosSystem.Services.ReceiptService ReceiptPrinter
+
+<PageTitle>Order History</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="mt-4">
+    <div class="d-flex justify-space-between align-center mb-4">
+        <div>
+            <MudText Typo="Typo.h5" Color="Color.Primary" Class="mb-1"><b>Sales History</b></MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">View and manage customer transactions</MudText>
+        </div>
+        @* Optional: Date Range Picker could go here *@
+    </div>
+
+    <MudTable Items="@Orders" Dense="true" Hover="true" Striped="true" Loading="@isLoading" Elevation="1">
+        <HeaderContent>
+            <MudTh>Date</MudTh>
+            <MudTh>Order #</MudTh>
+            <MudTh>Location</MudTh>
+            <MudTh>Customer</MudTh>
+            <MudTh>Payment</MudTh>
+            <MudTh>Status</MudTh>
+            <MudTh Style="text-align:right">Amount</MudTh>
+            <MudTh Style="text-align:center">Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Date">
+                <MudText Typo="Typo.body2">@context.CreatedAt.ToLocalTime().ToString("MMM dd, HH:mm")</MudText>
+            </MudTd>
+            <MudTd DataLabel="Order #">
+                <MudText Typo="Typo.body2" Style="font-weight:bold">@context.OrderNumber</MudText>
+            </MudTd>
+            <MudTd DataLabel="Location">
+                @* We display the Unit ID for now, or you can join with Units list *@
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Text">@GetUnitName(context.UnitId)</MudChip>
+            </MudTd>
+            <MudTd DataLabel="Customer">
+                @if (!string.IsNullOrEmpty(context.CustomerName))
+                {
+                    <div class="d-flex flex-column">
+                        <MudText Typo="Typo.body2">@context.CustomerName</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@context.CustomerPhone</MudText>
+                    </div>
+                }
+                else
+                {
+                    <MudText Typo="Typo.caption" Class="text-muted">Walk-in</MudText>
+                }
+            </MudTd>
+            <MudTd DataLabel="Payment">
+                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">@context.PaymentMethod</MudChip>
+            </MudTd>
+            <MudTd DataLabel="Status">
+                <MudChip T="string" Size="Size.Small" Color="@(context.Status == "Completed" ? Color.Success : Color.Warning)">@context.Status</MudChip>
+            </MudTd>
+            <MudTd DataLabel="Amount" Style="text-align:right">
+                <MudText Typo="Typo.body2" Style="font-weight:bold">@context.TotalAmount.ToString("C2")</MudText>
+            </MudTd>
+            <MudTd Style="text-align:center">
+                <MudIconButton Icon="@Icons.Material.Filled.Visibility" Size="Size.Small" Color="Color.Primary" OnClick="@(() => ViewOrderDetails(context))" />
+                <MudIconButton Icon="@Icons.Material.Filled.Print" Size="Size.Small" Color="Color.Secondary" OnClick="@(() => PrintOrder(context))" />
+            </MudTd>
+        </RowTemplate>
+        <PagerContent>
+            <MudTablePager />
+        </PagerContent>
+    </MudTable>
+</MudContainer>
+
+@code {
+    private bool isLoading = true;
+    private List<Order> Orders = new();
+    private List<Unit> Units = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        
+        // 1. Load Units so we can show names instead of IDs
+        Units = (await UnitOfWork.Units.GetAllAsync()).ToList();
+
+        // 2. Load Orders (In a real app, you would filter by TenantId here)
+        var allOrders = await UnitOfWork.Orders.GetAllAsync();
+        
+        // Sort by Newest First
+        Orders = allOrders.OrderByDescending(x => x.CreatedAt).ToList();
+
+        isLoading = false;
+    }
+
+    private string GetUnitName(string unitId)
+    {
+        var unit = Units.FirstOrDefault(u => u.Id == unitId);
+        return unit?.Name ?? "Unknown";
+    }
+    private async Task ViewOrderDetails(Order order)
+    {
+        // FIX: Use the specific repository method we just created.
+        // This replaces the broken "UnitOfWork.Orders.Context..." line.
+        var fullOrder = await UnitOfWork.Orders.GetOrderWithDetailsAsync(order.Id);
+
+        if (fullOrder == null)
+        {
+            Snackbar.Add("Could not load order details", Severity.Error);
+            return;
+        }
+
+        var parameters = new DialogParameters<OrderDetailsDialog>
+        {
+            { x => x.Order, fullOrder }
+        };
+
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true };
+
+        DialogService.Show<OrderDetailsDialog>("Receipt", parameters, options);
+    }
+    private async Task PrintOrder(Order order)
+    {
+        try
+        {
+            // 1. Fetch the full order (we need the Items list to print the receipt)
+            // The table list usually doesn't load nested items for performance.
+            var fullOrder = await UnitOfWork.Orders.GetOrderWithDetailsAsync(order.Id);
+
+            if (fullOrder == null)
+            {
+                Snackbar.Add("Could not load order details", Severity.Error);
+                return;
+            }
+
+            // 2. Get Store Name (Using the helper method we already have)
+            string storeName = GetUnitName(fullOrder.UnitId);
+            string address = "123 Main Street"; // Placeholder
+
+            // 3. Print
+            await ReceiptPrinter.PrintAsync(fullOrder, storeName, address);
+            Snackbar.Add("Receipt sent to printer", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Print Failed: {ex.Message}", Severity.Error);
+        }
+    }
+}

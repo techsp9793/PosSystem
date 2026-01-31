@@ -85,6 +85,7 @@
                         <MudIconButton Icon="@Icons.Material.Filled.Delete"
                                        Color="Color.Error"
                                        Size="Size.Small"
+                                       Disabled="@(staff.User.Email == "reachmani9793@gmail.com" || staff.User.Id == currentUserId)"
                                        OnClick="@(() => DeleteAsync(staff.User))" />
                     </AuthorizeView>
                 </MudTd>
@@ -106,22 +107,51 @@
     private List<UserRowModel> userList = new();
     private bool isLoading = true;
     private string? currentTenantId;
-
+    private string? currentUserId;
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-        currentTenantId = authState.User.FindFirst("tenant_id")?.Value;
+        var user = authState.User;
+
+        // Existing logic for tenant
+        currentTenantId = user.FindFirst("tenant_id")?.Value;
+
+        // NEW: Capture the logged-in user's unique ID
+        currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
         await LoadDataAsync();
     }
-
+    // protected override async Task OnInitializedAsync()
+    // {
+    //     var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+    //     currentTenantId = authState.User.FindFirst("tenant_id")?.Value;
+    //     await LoadDataAsync();
+    // }
+    // UserManagement.razor - Updated LoadDataAsync
     private async Task LoadDataAsync()
     {
         isLoading = true;
         userList.Clear();
-        var users = await UnitOfWork.Users.FindAsync(u => u.TenantId == currentTenantId);
+
+        IEnumerable<ApplicationUser> users;
+
+        // FIX: If currentTenantId is null, the user is a Super Admin.
+        // They should see everyone so they can manage "No Role" users.
+        if (string.IsNullOrEmpty(currentTenantId))
+        {
+            users = await UnitOfWork.Users.GetAllAsync();
+        }
+        else
+        {
+            // Tenant Admins only see their own staff
+            users = await UnitOfWork.Users.FindAsync(u => u.TenantId == currentTenantId);
+        }
 
         foreach (var user in users)
         {
+            // Skip your own account so you don't accidentally edit yourself
+            if (user.Email == "reachmani9793@gmail.com") continue;
+
             var roles = await UserManager.GetRolesAsync(user);
             userList.Add(new UserRowModel
             {
@@ -131,10 +161,27 @@
         }
         isLoading = false;
     }
+    // private async Task LoadDataAsync()
+    // {
+    //     isLoading = true;
+    //     userList.Clear();
+    //     var users = await UnitOfWork.Users.FindAsync(u => u.TenantId == currentTenantId);
+
+    //     foreach (var user in users)
+    //     {
+    //         var roles = await UserManager.GetRolesAsync(user);
+    //         userList.Add(new UserRowModel
+    //         {
+    //             User = user,
+    //             RoleName = roles.FirstOrDefault() ?? "No Role"
+    //         });
+    //     }
+    //     isLoading = false;
+    // }
 
     private async Task CreateAsync()
     {
-        var parameters = new DialogParameters { ["TenantId"] = currentTenantId };
+        var parameters = new DialogParameters { ["TenantId"] = currentTenantId, ["Model"] = new ApplicationUser { Id = string.Empty } };
         var dialog = await DialogService.ShowAsync<UserDialog>("Add Staff Member", parameters);
         var result = await dialog.Result;
 

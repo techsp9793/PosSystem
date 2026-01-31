@@ -1,0 +1,184 @@
+﻿@page "/admin/settings/receipts"
+@using PosSystem.Data.Entities
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.EntityFrameworkCore
+@using PosSystem.Data
+@using PosSystem.Services
+@using Microsoft.AspNetCore.Authorization
+
+@attribute [Authorize(Policy = "Permissions.Tenants.Edit")]
+
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject ITenantService TenantService
+@inject ISnackbar Snackbar
+
+@* Use the Admin layout for settings pages *@
+@layout PosSystem.Components.Layout.MainLayout
+
+<PageTitle>Receipt Configuration</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
+    <MudText Typo="Typo.h5" Class="mb-4">Receipt Configuration</MudText>
+    <MudText Typo="Typo.body2" Class="mb-6 text-muted">
+        Customize how your printed receipts look.
+    </MudText>
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        <MudPaper Class="pa-4">
+            <MudForm>
+                <MudGrid>
+                    @* 1. Header / Business Name *@
+                    <MudItem xs="12">
+                        <MudTextField @bind-Value="Config.Header" Label="Receipt Header (Business Name)" Variant="Variant.Outlined" />
+                    </MudItem>
+
+                    @* 2. Logo URL *@
+                    <MudItem xs="12">
+                        <MudTextField @bind-Value="Config.LogoUrl"
+                                      Label="Logo Image URL"
+                                      HelperText="Paste a link to your logo image"
+                                      Variant="Variant.Outlined"
+                                      Adornment="Adornment.End"
+                                      AdornmentIcon="@Icons.Material.Filled.Image" />
+                    </MudItem>
+
+                    @* 3. Footer Message *@
+                    <MudItem xs="12">
+                        <MudTextField @bind-Value="Config.FooterMessage"
+                                      Label="Footer Message"
+                                      Lines="3"
+                                      HelperText="e.g. 'No Refunds', 'Thank You'"
+                                      Variant="Variant.Outlined" />
+                    </MudItem>
+
+                    @* 4. Toggles *@
+                    <MudItem xs="12" sm="6">
+                        <MudSwitch @bind-Value="Config.ShowQrCode" Color="Color.Primary" Label="Print Verification QR Code?" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudSwitch @bind-Value="Config.ShowTaxDetails" Color="Color.Primary" Label="Show Tax Breakdown?" />
+                    </MudItem>
+
+                    <MudItem xs="12" Class="d-flex justify-end mt-4">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveSettings">
+                            Save Configuration
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+            </MudForm>
+        </MudPaper>
+
+        @* Preview Section *@
+        <MudPaper Class="pa-4 mt-4 d-flex flex-column align-center" Style="max-width: 300px; margin: auto; border: 1px dashed #ccc;">
+            <MudText Typo="Typo.caption" Class="mb-2">PREVIEW</MudText>
+
+            @if (!string.IsNullOrEmpty(Config.LogoUrl))
+            {
+                <MudImage Src="@Config.LogoUrl" Width="80" Height="80" ObjectFit="ObjectFit.Contain" Class="mb-2" />
+            }
+            <MudText Typo="Typo.h6" Align="Align.Center">@Config.Header</MudText>
+            <MudText Typo="Typo.caption" Align="Align.Center">123 Street Name, City</MudText>
+            <MudDivider Class="my-2" Style="width:100%" />
+            <MudText Typo="Typo.body2">Item 1 .......... $10.00</MudText>
+            <MudText Typo="Typo.body2">Item 2 .......... $5.00</MudText>
+            <MudDivider Class="my-2" Style="width:100%" />
+            <MudText Typo="Typo.subtitle2">TOTAL: $15.00</MudText>
+            <MudDivider Class="my-2" Style="width:100%" />
+            @if (Config.ShowQrCode)
+            {
+                <MudIcon Icon="@Icons.Material.Filled.QrCode2" Size="Size.Large" Class="my-2" />
+            }
+            <MudText Typo="Typo.caption" Align="Align.Center">@Config.FooterMessage</MudText>
+        </MudPaper>
+    }
+</MudContainer>
+
+@code {
+    private bool isLoading = true;
+    private string currentTenantId = "";
+
+    // View Model to hold the form data
+    private ReceiptConfigModel Config = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentTenantId = TenantService.GetTenantId();
+        await LoadSettings();
+    }
+
+    private async Task LoadSettings()
+    {
+        isLoading = true;
+        using var context = await DbFactory.CreateDbContextAsync();
+
+        // [UPDATED] Use SystemSettings instead of TenantSettings
+        // Note: Make sure "SystemSettings" is in your DbContext
+        var settings = await context.SystemSettings
+            .Where(s => s.TenantId == currentTenantId && s.Key.StartsWith("Receipt_"))
+            .ToListAsync();
+
+        // Map DB rows to Object (Using 'Key' and 'Value')
+        Config.Header = GetVal(settings, "Receipt_Header", "My Business");
+        Config.LogoUrl = GetVal(settings, "Receipt_LogoUrl", "");
+        Config.FooterMessage = GetVal(settings, "Receipt_FooterMessage", "Thank you for your visit!");
+        Config.ShowQrCode = bool.Parse(GetVal(settings, "Receipt_ShowQrCode", "true"));
+        Config.ShowTaxDetails = bool.Parse(GetVal(settings, "Receipt_ShowTaxDetails", "false"));
+
+        isLoading = false;
+    }
+
+    private string GetVal(List<SystemSetting> list, string key, string defaultVal)
+    {
+        // [UPDATED] Use 'Key' and 'Value' properties
+        return list.FirstOrDefault(x => x.Key == key)?.Value ?? defaultVal;
+    }
+
+    private async Task SaveSettings()
+    {
+        using var context = await DbFactory.CreateDbContextAsync();
+
+        await SaveOrUpdate(context, "Receipt_Header", Config.Header);
+        await SaveOrUpdate(context, "Receipt_LogoUrl", Config.LogoUrl);
+        await SaveOrUpdate(context, "Receipt_FooterMessage", Config.FooterMessage);
+        await SaveOrUpdate(context, "Receipt_ShowQrCode", Config.ShowQrCode.ToString());
+        await SaveOrUpdate(context, "Receipt_ShowTaxDetails", Config.ShowTaxDetails.ToString());
+
+        await context.SaveChangesAsync();
+        Snackbar.Add("Settings Saved!", Severity.Success);
+    }
+
+    private async Task SaveOrUpdate(ApplicationDbContext context, string key, string value)
+    {
+        var existing = await context.SystemSettings
+            .FirstOrDefaultAsync(s => s.TenantId == currentTenantId && s.Key == key);
+
+        if (existing != null)
+        {
+            existing.Value = value ?? "";
+        }
+        else
+        {
+            context.SystemSettings.Add(new SystemSetting
+            {
+                Id = Guid.NewGuid().ToString(), // Assuming BaseEntity doesn't auto-gen in memory
+                TenantId = currentTenantId,
+                Key = key,
+                Value = value ?? ""
+            });
+        }
+    }
+
+    public class ReceiptConfigModel
+    {
+        public string Header { get; set; } = "";
+        public string LogoUrl { get; set; } = "";
+        public string FooterMessage { get; set; } = "";
+        public bool ShowQrCode { get; set; } = true;
+        public bool ShowTaxDetails { get; set; } = false;
+    }
+}

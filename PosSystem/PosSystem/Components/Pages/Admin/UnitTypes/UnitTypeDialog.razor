@@ -1,0 +1,56 @@
+﻿@using System.ComponentModel.DataAnnotations
+@using PosSystem.Data.Entities
+@using PosSystem.Services
+@using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PosSystem.Data
+
+@inject TerminologyService Terminology
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="form" Model="@Model">
+            <MudGrid>
+                @* 1. Name *@
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="Model.Name"
+                                  Label="Type Name (e.g. Store, Kitchen)"
+                                  Required="true"
+                                  Variant="Variant.Outlined" />
+                </MudItem>
+
+                @* 2. Description *@
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="Model.Description"
+                                  Label="Description"
+                                  Lines="3"
+                                  Variant="Variant.Outlined" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public UnitType Model { get; set; } = new();
+
+    private MudForm form = default!;
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Submit()
+    {
+        await form.Validate();
+        if (form.IsValid)
+        {
+            MudDialog.Close(DialogResult.Ok(Model));
+        }
+    }
+}

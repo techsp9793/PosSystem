@@ -1,41 +1,45 @@
 ﻿@using System.ComponentModel.DataAnnotations
 @using PosSystem.Data.Entities
 @using PosSystem.Data.Repositories.Interfaces
+@using Microsoft.EntityFrameworkCore
+@using PosSystem.Data
 @using Microsoft.AspNetCore.Authorization
 
 @* Only Super Admins with Tenant Edit permissions should access this *@
 @attribute [Authorize(Policy = "Permissions.Tenants.Edit")]
 
 @inject IUnitOfWork UnitOfWork
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
 
 <MudDialog>
     <DialogContent>
         <MudForm @ref="form" Model="@Model">
             <MudGrid>
+                @* 1. Basic Tenant Info *@
                 <MudItem xs="12">
-                    <MudTextField @bind-Value="Model.Name"
-                                  Label="Business / Tenant Name"
-                                  Required="true"
-                                  Variant="Variant.Outlined"
-                                  Class="mb-2" />
+                    <MudTextField @bind-Value="Model.Name" Label="Business / Tenant Name" Required="true" Variant="Variant.Outlined" Class="mb-2" />
                 </MudItem>
 
+                @* 2. [NEW] Business Category Selection *@
                 <MudItem xs="12">
-                    <MudSelect T="string"
-                               @bind-Value="Model.SubscriptionPlanId"
-                               Label="Assigned Subscription Plan"
-                               Variant="Variant.Outlined"
-                               Required="true"
-                               Class="mb-2">
+                    <MudSelect T="string" Label="Business Type" @bind-Value="Model.BusinessCategoryId" Required="true" Variant="Variant.Outlined" HelperText="Configures default menu names (e.g. 'Ticket' vs 'Product')">
+                        @foreach (var cat in BusinessCategories)
+                        {
+                            <MudSelectItem Value="@cat.Id">@cat.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+
+                @* 3. Subscription Plan *@
+                <MudItem xs="12">
+                    <MudSelect T="string" @bind-Value="Model.SubscriptionPlanId" Label="Assigned Subscription Plan" Variant="Variant.Outlined" Required="true" Class="mb-2">
                         @if (!AvailablePlans.Any())
                         {
                             <MudSelectItem Value="@((string)null!)" Disabled="true">No active plans found</MudSelectItem>
                         }
                         @foreach (var plan in AvailablePlans)
                         {
-                            <MudSelectItem Value="@plan.Id">
-                                @plan.Name (@plan.Price.ToString("C") / @plan.DurationInDays Days)
-                            </MudSelectItem>
+                            <MudSelectItem Value="@plan.Id">@plan.Name (@plan.Price.ToString("C") / @plan.DurationInDays Days)</MudSelectItem>
                         }
                     </MudSelect>
                 </MudItem>
@@ -46,12 +50,18 @@
                     </MudAlert>
                 </MudItem>
 
+                @* 4. [NEW] Admin Email (Only shown for New Tenants) *@
+                @if (string.IsNullOrEmpty(Model.Id))
+                {
+                    <MudItem xs="12">
+                        <MudTextField @bind-Value="AdminEmail" Label="Tenant Admin Email" Required="true" Variant="Variant.Outlined" InputType="InputType.Email" HelperText="This email will be used to create the initial admin user." />
+                    </MudItem>
+                }
+
                 <MudItem xs="12">
                     <div class="d-flex align-center justify-space-between border-dashed pa-4 rounded">
                         <MudText Typo="Typo.body1">Tenant Status</MudText>
-                        <MudSwitch @bind-Value="Model.IsActive"
-                                   Color="Color.Success"
-                                   Label="@(Model.IsActive ? "Active (Access Granted)" : "Inactive (Access Revoked)")" />
+                        <MudSwitch @bind-Value="Model.IsActive" Color="Color.Success" Label="@(Model.IsActive ? "Active (Access Granted)" : "Inactive (Access Revoked)")" />
                     </div>
                 </MudItem>
             </MudGrid>
@@ -59,9 +69,7 @@
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="Cancel">Cancel</MudButton>
-        <MudButton Color="Color.Primary"
-                   Variant="Variant.Filled"
-                   OnClick="Submit">
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">
             @(string.IsNullOrEmpty(Model.Id) ? "Provision Tenant" : "Update Tenant")
         </MudButton>
     </DialogActions>
@@ -69,19 +77,25 @@
 
 @code {
     [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
-
     [Parameter] public Tenant Model { get; set; } = new();
+
+    // [NEW] Capture Email for User Creation
+    public string AdminEmail { get; set; } = "";
 
     private MudForm form = default!;
     private List<SubscriptionPlan> AvailablePlans = new();
+    private List<BusinessCategory> BusinessCategories = new();
 
     protected override async Task OnInitializedAsync()
     {
-        // Fetch only plans marked as Active for selection
+        // Load Plans
         var plans = await UnitOfWork.SubscriptionPlans.FindAsync(p => p.IsActive);
         AvailablePlans = plans.OrderBy(p => p.Price).ToList();
 
-        // Set default values for new tenants
+        // [NEW] Load Business Categories directly
+        using var context = await DbFactory.CreateDbContextAsync();
+        BusinessCategories = await context.BusinessCategories.ToListAsync();
+
         if (string.IsNullOrEmpty(Model.Id))
         {
             Model.IsActive = true;
@@ -96,14 +110,28 @@
         await form.Validate();
         if (form.IsValid)
         {
-            // Sync the PlanType name for easy display in the Index table
+            // Sync Plan Name
             var selectedPlan = AvailablePlans.FirstOrDefault(p => p.Id == Model.SubscriptionPlanId);
-            if (selectedPlan != null)
+            if (selectedPlan != null) Model.PlanType = selectedPlan.Name;
+
+            // [NEW] Prepare Terminology Data
+            var selectedCategory = BusinessCategories.FirstOrDefault(c => c.Id == Model.BusinessCategoryId);
+            var terms = new List<TenantTerminology>();
+
+            if (string.IsNullOrEmpty(Model.Id) && selectedCategory != null)
             {
-                Model.PlanType = selectedPlan.Name;
+                // Seed Default Terms based on Category
+                terms.Add(new TenantTerminology { TermKey = "Label_Product", TermValue = selectedCategory.DefaultProductTerm });
+                terms.Add(new TenantTerminology { TermKey = "Label_Category", TermValue = selectedCategory.DefaultCategoryTerm });
             }
 
-            MudDialog.Close(DialogResult.Ok(Model));
+            // [NEW] Return Composite Data (Tenant + Email + Terms)
+            MudDialog.Close(DialogResult.Ok(new
+            {
+                Tenant = Model,
+                AdminEmail = AdminEmail,
+                Terms = terms
+            }));
         }
     }
 }

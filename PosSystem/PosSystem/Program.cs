@@ -32,8 +32,14 @@ namespace PosSystem
             builder.Services.AddScoped<ThemeService>();
             builder.Services.AddScoped<ITenantService, TenantService>();
             builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+            builder.Services.AddScoped<SystemSettingsService>();
+            builder.Services.AddScoped<NotificationService>();
             builder.Services.AddCascadingAuthenticationState();
-
+            builder.Services.AddScoped<TerminologyService>();
+            builder.Services.AddScoped<PosSystem.Services.PosStateService>();
+            builder.Services.AddScoped<PosSystem.Services.ReceiptService>();
+            builder.Services.AddScoped<PosSystem.Services.DashboardService>();
+            builder.Services.AddScoped<PosSystem.Services.StockService>();
             builder.Services.AddAuthentication(options =>
                 {
                     options.DefaultScheme = IdentityConstants.ApplicationScheme;
@@ -94,6 +100,7 @@ namespace PosSystem
             using (var scope = app.Services.CreateScope())
             {
                 await PermissionSeeder.SeedPermissionsAsync(scope.ServiceProvider);
+                await DbInitializer.SeedRolesAndPermissionsAsync(scope.ServiceProvider);
             }
             
             // Configure the HTTP request pipeline.
@@ -119,16 +126,28 @@ namespace PosSystem
                 .AddInteractiveWebAssemblyRenderMode()
                 .AddAdditionalAssemblies(typeof(Client._Imports).Assembly);
 
-            
             app.MapGet("/auth/login-bridge", async (string userId, UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager) =>
             {
-                var user = await userManager.FindByIdAsync(userId);
+                // FIX: Search directly using EF Core to ignore Global Filters
+                var user = await userManager.Users
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(u => u.Id == userId);
+
                 if (user == null) return Results.Redirect("/login");
 
                 // This runs on the server, securely setting the cookie
                 await signInManager.SignInAsync(user, isPersistent: true);
                 return Results.Redirect("/dashboard");
             });
+            //app.MapGet("/auth/login-bridge", async (string userId, UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager) =>
+            //{
+            //    var user = await userManager.FindByIdAsync(userId);
+            //    if (user == null) return Results.Redirect("/login");
+
+            //    // This runs on the server, securely setting the cookie
+            //    await signInManager.SignInAsync(user, isPersistent: true);
+            //    return Results.Redirect("/dashboard");
+            //});
             app.MapGet("/auth/logout", async (SignInManager<ApplicationUser> signInManager) =>
             {
                 await signInManager.SignOutAsync();

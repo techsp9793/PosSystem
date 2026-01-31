@@ -3,16 +3,29 @@
 @using PosSystem.Client.Services
 @using PosSystem.Client.Themes
 @using PosSystem.Data
+@using PosSystem.Services
+@using PosSystem.Data.Entities                  
+@using PosSystem.Data.Repositories.Interfaces 
+
 @inherits LayoutComponentBase
+
 @inject NavigationManager Navigation
 @inject ThemeService ThemeService
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject TerminologyService Terminology
+@inject ITenantService TenantService
+
+@* [NEW] Injects for Location Switching *@
+@inject IUnitOfWork UnitOfWork
+@inject PosStateService PosState
+
 <MudThemeProvider Theme="@AppTheme.Default"
                   IsDarkMode="@ThemeService.IsDarkMode" />
 <MudPopoverProvider />
 <MudDialogProvider />
 <MudSnackbarProvider />
+
 <MudLayout>
     <MudAppBar Elevation="1" Dense="true" Fixed="true" Color="Color.Surface">
         <MudIconButton Icon="@Icons.Material.Filled.Menu"
@@ -22,7 +35,40 @@
         <MudText Typo="Typo.h5" Class="ml-3" Color="Color.Inherit">
             MyPOS
         </MudText>
+
         <MudSpacer />
+
+        @* --- [NEW] LOCATION SELECTOR --- *@
+        <div style="min-width: 200px; max-width: 300px;" class="mr-4">
+            <MudSelect T="string" Label="Current Location" Variant="Variant.Outlined" Margin="Margin.Dense"
+                       Value="@PosState.CurrentUnit?.Id"
+                       ValueChanged="OnUnitChanged"
+                       AnchorOrigin="Origin.BottomCenter"
+                       Class="mt-1"
+                       Style="background-color: var(--mud-palette-background);">
+                @if (AvailableUnits != null)
+                {
+                    @foreach (var unit in AvailableUnits)
+                    {
+                        <MudSelectItem Value="@unit.Id">@unit.Name</MudSelectItem>
+                    }
+                }
+            </MudSelect>
+        </div>
+        @* -------------------------------- *@
+
+        <AuthorizeView Policy="Permissions.Pos.Access">
+            <Authorized>
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Secondary"
+                           StartIcon="@Icons.Material.Filled.PointOfSale"
+                           Href="/pos"
+                           Class="mr-4 rounded-pill"
+                           Elevation="4">
+                    <b>Open POS</b>
+                </MudButton>
+            </Authorized>
+        </AuthorizeView>
         <MudSwitch T="bool"
                    Value="@ThemeService.IsDarkMode"
                    ValueChanged="@(async (bool val) => await ThemeService.SetDarkModeAsync(val))"
@@ -32,21 +78,19 @@
             <Authorized>
                 <MudMenu Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Class="ml-2">
                     <ActivatorContent>
-                        @* <MudChip T="string" Color="Color.Surface" Class="ma-0" Style="cursor:pointer"> *@
-                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
-                                <MudAvatar Color="Color.Primary" Size="Size.Small">
-                                    @if (!string.IsNullOrEmpty(CurrentUserProfileUrl))
-                                    {
-                                        <MudImage Src="@CurrentUserProfileUrl" />
-                                    }
-                                    else
-                                    {
-                                        @context.User.Identity?.Name?.FirstOrDefault().ToString().ToUpper()
-                                    }
-                                </MudAvatar>
-                                <MudText Typo="Typo.body2">@context.User.Identity?.Name</MudText>
-                            </MudStack>
-                       @*  </MudChip> *@
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                            <MudAvatar Color="Color.Primary" Size="Size.Small">
+                                @if (!string.IsNullOrEmpty(CurrentUserProfileUrl))
+                                {
+                                    <MudImage Src="@CurrentUserProfileUrl" />
+                                }
+                                else
+                                {
+                                    @context.User.Identity?.Name?.FirstOrDefault().ToString().ToUpper()
+                                }
+                            </MudAvatar>
+                            <MudText Typo="Typo.body2">@context.User.Identity?.Name</MudText>
+                        </MudStack>
                     </ActivatorContent>
                     <ChildContent>
                         <MudMenuItem Href="/user/profile">
@@ -83,15 +127,20 @@
 
     <MudMainContent Class="d-flex flex-column" Style="height: 100vh;">
         <MudContainer MaxWidth="MaxWidth.False"
-                     Class="pa-4 flex-grow-1" 
+                      Class="pa-4 flex-grow-1"
                       Style="margin-top: 64px;">
             @Body
         </MudContainer>
     </MudMainContent>
 </MudLayout>
+
 @code {
     private bool _drawerOpen = true;
     private string? CurrentUserProfileUrl;
+
+    // [NEW] Unit List
+    private List<Unit> AvailableUnits = new();
+
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
@@ -104,16 +153,54 @@
             {
                 CurrentUserProfileUrl = appUser.ProfilePictureUrl;
             }
+
+            var tenantId = TenantService.GetTenantId();
+            if (string.IsNullOrEmpty(tenantId) && appUser != null)
+            {
+                tenantId = appUser.TenantId;
+            }
+
+            if (!string.IsNullOrEmpty(tenantId))
+            {
+                await Terminology.LoadTermsAsync(tenantId);
+            }
+        }
+
+        // [NEW] Load Units for Dropdown
+        try
+        {
+            AvailableUnits = (await UnitOfWork.Units.GetAllAsync()).ToList();
+
+            // If none selected, default to the first one
+            if (!PosState.IsUnitSelected && AvailableUnits.Any())
+            {
+                PosState.SetUnit(AvailableUnits.First());
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading units: {ex.Message}");
         }
 
         ThemeService.OnChange += StateHasChanged;
+    }
+
+    // [NEW] Handle Dropdown Change
+    private void OnUnitChanged(string unitId)
+    {
+        var selectedUnit = AvailableUnits.FirstOrDefault(u => u.Id == unitId);
+        if (selectedUnit != null)
+        {
+            PosState.SetUnit(selectedUnit);
+            // This triggers the OnChange event in PosStateService,
+            // which pages like Inventory/Index.razor are listening to.
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
-            // Load the saved theme from the browser's local storage
             await ThemeService.InitializeAsync();
             StateHasChanged();
         }
@@ -121,11 +208,9 @@
 
     public void Dispose()
     {
-        // Unsubscribe to prevent memory leaks
         ThemeService.OnChange -= StateHasChanged;
     }
 
     private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
-    // Point to the API bridge we just created
     private void Logout() => Navigation.NavigateTo("/auth/logout", forceLoad: true);
 }

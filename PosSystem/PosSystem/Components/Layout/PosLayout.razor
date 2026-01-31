@@ -1,0 +1,55 @@
+﻿@inherits LayoutComponentBase
+@using PosSystem.Client.Services
+@using PosSystem.Services
+@using PosSystem.Client.Themes
+@inject PosStateService PosState
+@inject NavigationManager Navigation
+@inject ThemeService ThemeService
+
+@* --- PROVIDERS --- *@
+<MudThemeProvider Theme="@AppTheme.Default" IsDarkMode="@ThemeService.IsDarkMode" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    @* Added Fixed="true" to ensure it stays pinned at the top *@
+    <MudAppBar Elevation="1" Color="Color.Primary" Dense="true" Fixed="true" Style="height: 50px;">
+        <MudIcon Icon="@Icons.Material.Filled.PointOfSale" Class="mr-3" />
+        <MudText Typo="Typo.h6" Style="font-weight:bold;">
+            @(PosState.CurrentUnit?.Name ?? "Point of Sale")
+        </MudText>
+
+        <MudSpacer />
+
+        <MudTooltip Text="Exit to Dashboard">
+            <MudIconButton Icon="@Icons.Material.Filled.ExitToApp"
+                           Color="Color.Inherit"
+                           OnClick="ExitPos" />
+        </MudTooltip>
+    </MudAppBar>
+
+    @* --- THE FIX IS HERE: padding-top: 50px --- *@
+    <MudMainContent Class="mud-theme-background" Style="height: 100vh; padding-top: 50px; padding-left:0; padding-right:0;">
+        @Body
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        PosState.OnChange += StateHasChanged;
+        await ThemeService.InitializeAsync();
+    }
+
+    private void ExitPos()
+    {
+        PosState.ClearUnit();
+        Navigation.NavigateTo("/dashboard", forceLoad: true);
+    }
+
+    public void Dispose()
+    {
+        PosState.OnChange -= StateHasChanged;
+    }
+}

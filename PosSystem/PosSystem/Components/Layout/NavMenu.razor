@@ -1,65 +1,153 @@
 ﻿@using Microsoft.AspNetCore.Authorization
 @using MudBlazor
-@inject NavigationManager Navigation
+@using PosSystem.Services
 
-@* Wrapper forces the menu to take full height of the drawer *@
+@inject NavigationManager Navigation
+@inject TerminologyService Terminology
+
 <div class="d-flex flex-column" style="height: 100%; min-height: calc(100vh - 64px);">
 
-    @* --- TOP SECTION (Dashboard & Admin) --- *@
+    @* --- TOP SECTION --- *@
     <div class="flex-grow-1">
         <MudNavMenu>
-            @* Spacer to push Dashboard away from the top bar *@
             <div style="height: 32px;"></div>
 
             <MudNavLink Href="/dashboard" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">
                 Dashboard
             </MudNavLink>
 
-            <AuthorizeView Policy="Permissions.Tenants.View">
+            @* --- OPERATIONS --- *@
+            <MudNavGroup Title="Operations" Icon="@Icons.Material.Filled.Store" Expanded="true">
+                <MudNavLink Href="/pos" Icon="@Icons.Material.Filled.PointOfSale">Point of Sale</MudNavLink>
+
+                @* [NEW] INVENTORY LINK *@
+                <AuthorizeView Policy="Permissions.Inventory.View">
+                    <Authorized>
+                        <MudNavLink Href="/inventory" Icon="@Icons.Material.Filled.Warehouse">Inventory</MudNavLink>
+                    </Authorized>
+                </AuthorizeView>
+
+                @* [FIX] Wrapped in AuthorizeView so only allowed users see it *@
+                <AuthorizeView Policy="Permissions.Orders.View">
+                    <Authorized>
+                        <MudNavLink Href="/orders" Icon="@Icons.Material.Filled.Receipt">Orders</MudNavLink>
+                    </Authorized>
+                </AuthorizeView>
+            </MudNavGroup>
+
+            @* --- CATALOG --- *@
+            <MudNavGroup Title="Catalog" Icon="@Icons.Material.Filled.Category" Expanded="true">
+                <MudNavLink Href="/catalog/products" Icon="@Icons.Material.Filled.Inventory2">
+                    @Terminology.GetText("Label_Product", "Products")
+                </MudNavLink>
+
+                <MudNavLink Href="/catalog/categories" Icon="@Icons.Material.Filled.Class">
+                    @Terminology.GetText("Label_Category", "Categories")
+                </MudNavLink>
+            </MudNavGroup>
+
+            @* --- UNIT MANAGEMENT GROUP --- *@
+            <AuthorizeView Policy="Permissions.Units.View">
                 <Authorized>
-                    <MudNavLink Href="/admin/tenants" Icon="@Icons.Material.Filled.Business">Tenants</MudNavLink>
-                </Authorized>
-            </AuthorizeView>
-            @* --- SUBSCRIPTION PLANS --- *@
-            <AuthorizeView Policy="Permissions.Plans.View">
-                <Authorized>
-                    <MudNavLink Href="/admin/plans" Icon="@Icons.Material.Filled.CardMembership">Subscription Plans</MudNavLink>
-                </Authorized>
-            </AuthorizeView>
-            <AuthorizeView Policy="Permissions.Users.View" Context="userMgmt">
-                <Authorized>
-                    <MudNavGroup Title="User Management" Icon="@Icons.Material.Filled.ManageAccounts">
-                        <MudNavLink Href="/admin/users" Icon="@Icons.Material.Filled.People">Users</MudNavLink>
-                        <AuthorizeView Policy="Permissions.Roles.View" Context="roleContext">
+                    <MudNavGroup Title="@Terminology.GetText("Label_Unit", "Units")" Icon="@Icons.Material.Filled.Storefront" Expanded="false">
+                        <MudNavLink Href="/admin/units" Icon="@Icons.Material.Filled.Store">
+                            Manage @Terminology.GetText("Label_Unit", "Units")
+                        </MudNavLink>
+                        <AuthorizeView Policy="Permissions.UnitTypes.View" Context="typeContext">
                             <Authorized>
-                                <MudNavLink Href="/admin/roles" Icon="@Icons.Material.Filled.Security">Roles</MudNavLink>
+                                <MudNavLink Href="/admin/unit-types" Icon="@Icons.Material.Filled.Category">
+                                    Unit Types
+                                </MudNavLink>
                             </Authorized>
                         </AuthorizeView>
                     </MudNavGroup>
                 </Authorized>
             </AuthorizeView>
+
+            @* --- TENANTS (Super Admin) --- *@
+            <AuthorizeView Policy="Permissions.Tenants.View">
+                <Authorized>
+                    <MudNavLink Href="/admin/tenants" Icon="@Icons.Material.Filled.Business">Tenants</MudNavLink>
+                </Authorized>
+            </AuthorizeView>
+
+            @* --- SUBSCRIPTION PLANS (Super Admin) --- *@
+            <AuthorizeView Policy="Permissions.Plans.View">
+                <Authorized>
+                    <MudNavLink Href="/admin/plans" Icon="@Icons.Material.Filled.CardMembership">Subscription Plans</MudNavLink>
+                </Authorized>
+            </AuthorizeView>
+
+            @* --- USER MANAGEMENT --- *@
+            <AuthorizeView Policy="Permissions.Users.View" Context="userMgmt">
+                <Authorized>
+                    <MudNavGroup Title="User Management" Icon="@Icons.Material.Filled.ManageAccounts">
+                        <MudNavLink Href="/admin/users" Icon="@Icons.Material.Filled.People">Users</MudNavLink>
+                    </MudNavGroup>
+                </Authorized>
+            </AuthorizeView>
+
+            @* --- CONFIGURATION --- *@
+            <AuthorizeView Policy="Permissions.Roles.View" Context="configContext">
+                <Authorized>
+                    <MudNavGroup Title="Configuration" Icon="@Icons.Material.Filled.Settings" Expanded="false">
+                        <MudNavLink Href="/admin/roles" Icon="@Icons.Material.Filled.Security">Roles & Permissions</MudNavLink>
+
+                        <AuthorizeView Policy="Permissions.Terminology.View" Context="termContext">
+                            <Authorized>
+                                <MudNavLink Href="/admin/settings/terminology" Icon="@Icons.Material.Filled.Translate">Terminology</MudNavLink>
+                                <MudNavLink Href="/admin/configurations" Icon="@Icons.Material.Filled.ListAlt">Global Configs</MudNavLink>
+                            </Authorized>
+                        </AuthorizeView>
+
+                        <AuthorizeView Policy="Permissions.Tenants.Edit" Context="settingsContext">
+                            <Authorized>
+                                <MudNavLink Href="/settings" Icon="@Icons.Material.Filled.Tune">System Settings</MudNavLink>
+                            </Authorized>
+                            <Authorized>
+                                <MudNavLink Href="/admin/settings/receipts" Icon="@Icons.Material.Filled.ReceiptLong">
+                                    Receipt Settings
+                                </MudNavLink>
+                            </Authorized>
+                        </AuthorizeView>
+                    </MudNavGroup>
+                </Authorized>
+            </AuthorizeView>
+
         </MudNavMenu>
     </div>
 
-    @* --- BOTTOM SECTION (Profile & Logout) --- *@
+    @* --- BOTTOM SECTION --- *@
     <div class="mt-auto pb-4">
         <MudDivider Class="my-2" />
         <MudNavMenu>
             <MudNavLink Href="/user/profile" Icon="@Icons.Material.Filled.Person">Profile</MudNavLink>
-
-           
-            <MudNavLink OnClick="HandleLogout"
-                        Icon="@Icons.Material.Filled.Logout"
-                        IconColor="Color.Error"
-                        Class="logout-link">
+            <MudNavLink OnClick="HandleLogout" Icon="@Icons.Material.Filled.Logout" IconColor="Color.Error" Class="logout-link">
                 Logout
             </MudNavLink>
         </MudNavMenu>
     </div>
 </div>
 
+@* --- DEBUG INFO --- *@
+<div class="pa-4">
+    <MudAlert Severity="Severity.Info" Dense="true" Class="mb-2">Debug Security Info</MudAlert>
+    <AuthorizeView>
+        <Authorized>
+            <MudText Typo="Typo.caption"><b>User:</b> @context.User.Identity?.Name</MudText><br />
+            <div style="max-height: 150px; overflow-y: auto; border: 1px solid #ccc; padding: 4px;">
+                @foreach (var claim in context.User.Claims)
+                {
+                    <MudText Typo="Typo.caption" Style="display:block">
+                        @claim.Type: <b>@claim.Value</b>
+                    </MudText>
+                }
+            </div>
+        </Authorized>
+    </AuthorizeView>
+</div>
+
 @code {
-    @* [FIX] Clean logout redirect to the bridge *@
     private void HandleLogout()
     {
         Navigation.NavigateTo("/auth/logout", forceLoad: true);

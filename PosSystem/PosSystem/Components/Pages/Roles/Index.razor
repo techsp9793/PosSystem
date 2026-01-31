@@ -90,21 +90,42 @@
 
         await LoadDataAsync();
     }
-
     private async Task LoadDataAsync()
     {
         isLoading = true;
         using var scope = ScopeFactory.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        roles = await context.Roles
-            .IgnoreQueryFilters()
-            .Where(r => r.TenantId == currentTenantId)
-            .AsNoTracking()
-            .ToListAsync();
+        var query = context.Roles.IgnoreQueryFilters().AsQueryable();
 
+        if (!string.IsNullOrEmpty(currentTenantId))
+        {
+            // Tenant Admin: ONLY see roles for this tenant
+            query = query.Where(r => r.TenantId == currentTenantId);
+        }
+        else
+        {
+            // Super Admin: See everything EXCEPT the master "Techspruce" role
+            query = query.Where(r => r.Name != "Techspruce");
+        }
+
+        roles = await query.AsNoTracking().OrderBy(r => r.Name).ToListAsync();
         isLoading = false;
     }
+    // private async Task LoadDataAsync()
+    // {
+    //     isLoading = true;
+    //     using var scope = ScopeFactory.CreateScope();
+    //     var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+    //     roles = await context.Roles
+    //         .IgnoreQueryFilters()
+    //         .Where(r => r.TenantId == currentTenantId)
+    //         .AsNoTracking()
+    //         .ToListAsync();
+
+    //     isLoading = false;
+    // }
 
     private async Task CreateAsync()
     {
