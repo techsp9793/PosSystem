@@ -18,9 +18,9 @@ namespace PosSystem.Data.Entities
         public string PaymentMethod { get; set; } = "Cash"; // Cash, UPI, Card
         public string Status { get; set; } = "Completed";   // Completed, Parked, Void
 
-        public bool IsSynced { get; set; } = true;
-
-        // [NEW] Navigation Property: The list of products in this order
+        public bool IsSynced { get; set; } = false;
+        public DateTime? SyncedAt { get; set; }
+        public string? PaymentReferenceId { get; set; }
         public List<OrderItem> OrderItems { get; set; } = new();
     }
 }

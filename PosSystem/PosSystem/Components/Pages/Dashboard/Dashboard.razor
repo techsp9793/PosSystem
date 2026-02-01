@@ -1,65 +1,84 @@
 ﻿@page "/dashboard"
 @using PosSystem.Services
+@using PosSystem.Data.Entities
+@implements IDisposable
+
 @inject DashboardService StatsService
+@inject PosStateService PosState
 @inject ISnackbar Snackbar
 
 <PageTitle>Dashboard</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.False" Class="mt-4">
-    <MudText Typo="Typo.h5" Class="mb-4"><b>Today's Overview</b> (@DateTime.Now.ToString("MMM dd"))</MudText>
-
-    @if (isLoading)
+    @if (PosState.CurrentUnit == null)
     {
-        <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="my-7" />
+        @* --- STATE: NO LOCATION SELECTED --- *@
+        <div class="d-flex flex-column align-center justify-center" style="height: 60vh;">
+            <MudIcon Icon="@Icons.Material.Filled.Storefront" Size="Size.Large" Color="Color.Default" style="width: 100px; height: 100px; opacity: 0.2;" />
+            <MudText Typo="Typo.h5" Class="mt-4 text-muted">Select a Location</MudText>
+            <MudText Typo="Typo.body1" Class="text-muted">Please select a store from the top bar to view statistics.</MudText>
+        </div>
     }
     else
     {
-        <MudGrid>
-            @* --- Total Revenue --- *@
-            <MudItem xs="12" sm="6" md="3">
-                <MudPaper Class="d-flex flex-row pt-6 pb-4" Style="height:100px;">
-                    <MudIcon Icon="@Icons.Material.Filled.AttachMoney" Color="Color.Success" Class="mx-4" Style="width:54px; height:54px;"></MudIcon>
-                    <div>
-                        <MudText Typo="Typo.subtitle1" Class="mud-text-secondary mb-n1">Total Sales</MudText>
-                        <MudText Typo="Typo.h5">@Stats.TotalRevenue.ToString("C2")</MudText>
-                    </div>
-                </MudPaper>
-            </MudItem>
+        @* --- STATE: DATA LOADED --- *@
+        <MudText Typo="Typo.h5" Class="mb-4">
+            <b>@(PosState.CurrentUnit.Name) Overview</b> (@DateTime.Now.ToString("MMM dd"))
+        </MudText>
 
-            @* --- Total Orders --- *@
-            <MudItem xs="12" sm="6" md="3">
-                <MudPaper Class="d-flex flex-row pt-6 pb-4" Style="height:100px;">
-                    <MudIcon Icon="@Icons.Material.Filled.Receipt" Color="Color.Primary" Class="mx-4" Style="width:54px; height:54px;"></MudIcon>
-                    <div>
-                        <MudText Typo="Typo.subtitle1" Class="mud-text-secondary mb-n1">Transactions</MudText>
-                        <MudText Typo="Typo.h5">@Stats.TotalOrders</MudText>
-                    </div>
-                </MudPaper>
-            </MudItem>
+        @if (isLoading)
+        {
+            <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="my-7" />
+        }
+        else
+        {
+            <MudGrid>
+                @* --- Total Revenue --- *@
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Class="d-flex flex-row pt-6 pb-4" Style="height:100px;">
+                        <MudIcon Icon="@Icons.Material.Filled.AttachMoney" Color="Color.Success" Class="mx-4" Style="width:54px; height:54px;"></MudIcon>
+                        <div>
+                            <MudText Typo="Typo.subtitle1" Class="mud-text-secondary mb-n1">Total Sales</MudText>
+                            <MudText Typo="Typo.h5">@Stats.TotalRevenue.ToString("C2")</MudText>
+                        </div>
+                    </MudPaper>
+                </MudItem>
 
-            @* --- Average Value --- *@
-            <MudItem xs="12" sm="6" md="3">
-                <MudPaper Class="d-flex flex-row pt-6 pb-4" Style="height:100px;">
-                    <MudIcon Icon="@Icons.Material.Filled.TrendingUp" Color="Color.Warning" Class="mx-4" Style="width:54px; height:54px;"></MudIcon>
-                    <div>
-                        <MudText Typo="Typo.subtitle1" Class="mud-text-secondary mb-n1">Avg Order</MudText>
-                        <MudText Typo="Typo.h5">@Stats.AverageOrderValue.ToString("C2")</MudText>
-                    </div>
-                </MudPaper>
-            </MudItem>
+                @* --- Total Orders --- *@
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Class="d-flex flex-row pt-6 pb-4" Style="height:100px;">
+                        <MudIcon Icon="@Icons.Material.Filled.Receipt" Color="Color.Primary" Class="mx-4" Style="width:54px; height:54px;"></MudIcon>
+                        <div>
+                            <MudText Typo="Typo.subtitle1" Class="mud-text-secondary mb-n1">Transactions</MudText>
+                            <MudText Typo="Typo.h5">@Stats.TotalOrders</MudText>
+                        </div>
+                    </MudPaper>
+                </MudItem>
 
-            @* --- Cash vs Card --- *@
-            <MudItem xs="12" sm="6" md="3">
-                <MudPaper Class="pa-4" Style="height:100px;">
-                    <MudText Typo="Typo.body2">Payment Split</MudText>
-                    <div class="d-flex justify-space-between mt-2">
-                        <MudText Color="Color.Success">Cash: @Stats.CashSales.ToString("N0")</MudText>
-                        <MudText Color="Color.Info">Digi: @Stats.CardSales.ToString("N0")</MudText>
-                    </div>
-                    <MudProgressLinear Color="Color.Success" Value="@((double)Stats.CashSales)" Max="@((double)Stats.TotalRevenue)" Class="mt-2" />
-                </MudPaper>
-            </MudItem>
-        </MudGrid>
+                @* --- Average Value --- *@
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Class="d-flex flex-row pt-6 pb-4" Style="height:100px;">
+                        <MudIcon Icon="@Icons.Material.Filled.TrendingUp" Color="Color.Warning" Class="mx-4" Style="width:54px; height:54px;"></MudIcon>
+                        <div>
+                            <MudText Typo="Typo.subtitle1" Class="mud-text-secondary mb-n1">Avg Order</MudText>
+                            <MudText Typo="Typo.h5">@Stats.AverageOrderValue.ToString("C2")</MudText>
+                        </div>
+                    </MudPaper>
+                </MudItem>
+
+                @* --- Payment Split --- *@
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Class="pa-4" Style="height:100px;">
+                        <MudText Typo="Typo.body2">Payment Split</MudText>
+                        <div class="d-flex justify-space-between mt-2">
+                            <MudText Color="Color.Success">Cash: @Stats.CashSales.ToString("N0")</MudText>
+                            <MudText Color="Color.Info">Digi: @Stats.CardSales.ToString("N0")</MudText>
+                        </div>
+                        <MudProgressLinear Color="Color.Success" Value="@((double)Stats.CashSales)" Max="@((double)(Stats.TotalRevenue > 0 ? Stats.TotalRevenue : 1))" Class="mt-2" />
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+        }
     }
 </MudContainer>
 
@@ -69,24 +88,48 @@
 
     protected override async Task OnInitializedAsync()
     {
+        // Listen for changes so we reload when user selects a location
+        PosState.OnChange += ReloadStats;
         await LoadStats();
+    }
+
+    private async void ReloadStats()
+    {
+        await InvokeAsync(async () =>
+        {
+            await LoadStats();
+            StateHasChanged();
+        });
     }
 
     private async Task LoadStats()
     {
+        // Safety: If no unit, stop.
+        if (PosState.CurrentUnit == null)
+        {
+            isLoading = false;
+            return;
+        }
+
         isLoading = true;
         try
         {
-            // Load stats for TODAY
-            Stats = await StatsService.GetDailyStatsAsync(DateTime.UtcNow);
+            // Now we pass the UnitId to filter data correctly
+            Stats = await StatsService.GetDailyStatsAsync(DateTime.UtcNow, PosState.CurrentUnit.Id);
         }
         catch (Exception ex)
         {
-            Snackbar.Add("Failed to load dashboard stats.", Severity.Error);
+            Snackbar.Add("Failed to load stats.", Severity.Error);
+            Console.WriteLine(ex.Message);
         }
         finally
         {
             isLoading = false;
         }
     }
-}
+
+    public void Dispose()
+    {
+        PosState.OnChange -= ReloadStats;
+    }
+}        

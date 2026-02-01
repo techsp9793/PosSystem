@@ -3,12 +3,16 @@
 @using System.Security.Claims
 @using Microsoft.AspNetCore.Identity
 @using PosSystem.Data
+@using PosSystem.Data.Entities
+@using PosSystem.Permissions
 @using System.IO
+@using System.Reflection
 @using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.AspNetCore.Components.Web
 @using Microsoft.EntityFrameworkCore
 
 @inject UserManager<ApplicationUser> UserManager
+@inject RoleManager<ApplicationRole> RoleManager
 @inject SignInManager<ApplicationUser> SignInManager
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject IWebHostEnvironment Environment
@@ -115,6 +119,24 @@
             </MudTabPanel>
 
         </MudTabs>
+
+        @* --- SUPER ADMIN ZONE --- *@
+        @if (isSuperAdmin)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mt-6" Variant="Variant.Filled" Elevation="4">
+                <MudText Typo="Typo.h6">⚡ Super Admin Tools</MudText>
+                <MudText Typo="Typo.body2">
+                    Detected Role: <b>@userRole</b>. If you are missing permissions (e.g. Receipt Settings), click below to force-sync all available code permissions to your role.
+                </MudText>
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Dark"
+                           Class="mt-3"
+                           OnClick="SyncAllPermissions"
+                           StartIcon="@Icons.Material.Filled.SyncLock">
+                    Grant Me All Permissions
+                </MudButton>
+            </MudAlert>
+        }
     }
 </MudContainer>
 
@@ -124,10 +146,13 @@
     private string? AvatarUrl;
     private bool isLoading = true;
 
+    // Role State
+    private bool isSuperAdmin = false;
+    private string userRole = "";
+
     private ProfileInputModel Input { get; set; } = new();
     private PasswordModel PasswordInput { get; set; } = new();
 
-    // --- 1. SAFE LOAD (Uses Factory) ---
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
@@ -137,7 +162,7 @@
         {
             currentUserId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
 
-            // FIX: Use Factory to read data. This prevents collision with MainLayout.
+            // 1. Get User Data
             using var context = await DbFactory.CreateDbContextAsync();
             var dbUser = await context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == currentUserId);
 
@@ -147,11 +172,26 @@
                 Input.PhoneNumber = dbUser.PhoneNumber;
                 AvatarUrl = dbUser.ProfilePictureUrl;
             }
+
+            // 2. Check Roles for Super Admin Tool
+            // We use UserManager directly to check roles accurately
+            var userObj = await UserManager.GetUserAsync(principal);
+            if (userObj != null)
+            {
+                var roles = await UserManager.GetRolesAsync(userObj);
+                userRole = roles.FirstOrDefault() ?? "No Role";
+
+                // Allow if role is "Techspruce" OR "SuperAdmin"
+                if (userRole == "Techspruce" || userRole == "SuperAdmin")
+                {
+                    isSuperAdmin = true;
+                }
+            }
         }
         isLoading = false;
     }
 
-    // --- 2. UPLOAD LOGIC ---
+    // --- UPLOAD LOGIC ---
     private async Task UploadFile(IBrowserFile file)
     {
         if (string.IsNullOrEmpty(currentUserId) || file == null) return;
@@ -170,7 +210,6 @@
                 await file.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024).CopyToAsync(stream);
             }
 
-            // Safe DB Update
             using (var context = await DbFactory.CreateDbContextAsync())
             {
                 var dbUser = await context.Users.FindAsync(currentUserId);
@@ -183,7 +222,6 @@
 
             AvatarUrl = webPath;
             Snackbar.Add("Profile picture updated!", Severity.Success);
-
             await Task.Delay(1000);
             Navigation.Refresh(true);
         }
@@ -193,13 +231,10 @@
         }
     }
 
-    // --- 3. SAFE UPDATE LOGIC ---
+    // --- UPDATE PROFILE ---
     private async Task UpdateProfileAsync()
     {
         var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-
-        // FIX: Re-fetch the user here (MainLayout is done loading, so this is safe now)
-        // We use UserManager here because SetPhoneNumberAsync requires a tracked entity
         var user = await UserManager.GetUserAsync(authState.User);
 
         if (user == null)
@@ -225,7 +260,7 @@
         }
     }
 
-    // --- 4. SAFE PASSWORD CHANGE ---
+    // --- CHANGE PASSWORD ---
     private async Task ChangePasswordAsync()
     {
         var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
@@ -247,6 +282,64 @@
             {
                 Snackbar.Add(error.Description, Severity.Error);
             }
+        }
+    }
+
+    // --- SUPER ADMIN PERMISSION SYNC ---
+    private async Task SyncAllPermissions()
+    {
+        if (!isSuperAdmin) return;
+
+        try
+        {
+            var role = await RoleManager.FindByNameAsync(userRole);
+            if (role == null)
+            {
+                Snackbar.Add($"Role '{userRole}' not found in DB!", Severity.Error);
+                return;
+            }
+
+            // Dynamically find all constants in AppPermissions
+            var allCodePermissions = new List<string>();
+            var nestedClasses = typeof(AppPermissions).GetNestedTypes(BindingFlags.Public | BindingFlags.Static);
+            foreach (var type in nestedClasses)
+            {
+                var fields = type.GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy)
+                                 .Where(fi => fi.IsLiteral && !fi.IsInitOnly && fi.FieldType == typeof(string));
+
+                foreach (var field in fields)
+                {
+                    var val = (string?)field.GetValue(null);
+                    if (!string.IsNullOrEmpty(val)) allCodePermissions.Add(val);
+                }
+            }
+
+            var currentClaims = await RoleManager.GetClaimsAsync(role);
+            var currentPerms = currentClaims.Where(c => c.Type == "Permission").Select(c => c.Value).ToHashSet();
+
+            int count = 0;
+            foreach (var permCode in allCodePermissions)
+            {
+                if (!currentPerms.Contains(permCode))
+                {
+                    await RoleManager.AddClaimAsync(role, new Claim("Permission", permCode));
+                    count++;
+                }
+            }
+
+            if (count > 0)
+            {
+                Snackbar.Add($"Success! Added {count} new permissions.", Severity.Success);
+                Snackbar.Add("YOU MUST LOGOUT AND LOGIN AGAIN.", Severity.Warning, config => { config.RequireInteraction = true; });
+            }
+            else
+            {
+                Snackbar.Add("Your role is already up to date.", Severity.Info);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
         }
     }
 

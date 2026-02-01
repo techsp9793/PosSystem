@@ -2,7 +2,8 @@
 using Microsoft.EntityFrameworkCore;
 using PosSystem.Data.Entities;
 using System.Security.Claims;
-using PosSystem.Permissions; // Required for AppPermissions
+using PosSystem.Permissions;
+using PosSystem.Helpers; // [NEW] Required for EncryptionHelper
 
 namespace PosSystem.Data.Seeders
 {
@@ -18,7 +19,25 @@ namespace PosSystem.Data.Seeders
             // --- 0. ENSURE PERMISSIONS EXIST IN DB FIRST ---
             await PermissionSeeder.SeedPermissionsAsync(serviceProvider);
 
-            // Read from AppSettings
+            // =========================================================
+            // --- [NEW] STEP 1: SEED SECURE CONFIGURATIONS ---
+            // =========================================================
+            // This ensures the Webhook Secret exists in the DB (Encrypted)
+            if (!context.SystemSettings.Any(c => c.Key == "Razorpay_WebhookSecret"))
+            {
+                context.SystemSettings.Add(new SystemSetting
+                {
+                    Key = "Razorpay_WebhookSecret",
+                    // We encrypt the default local secret. 
+                    // You can change "my_local_secret_123" to match your appsettings if needed.
+                    Value = EncryptionHelper.Encrypt("my_local_secret_123")
+                    
+                });
+                // Save immediately so it's available for the rest of the app
+                await context.SaveChangesAsync();
+            }
+
+            // Read SuperAdmin Config
             string roleName = config["SuperAdmin:Role"] ?? "Techspruce";
             string superAdminEmail = config["SuperAdmin:Email"] ?? "admin@local";
             string defaultPassword = config["SuperAdmin:Password"] ?? "Password123!";
@@ -42,9 +61,9 @@ namespace PosSystem.Data.Seeders
             var allPermissions = await context.SystemPermissions.ToListAsync();
             var existingClaims = await roleManager.GetClaimsAsync(techSpruceRole);
             var existingCodes = existingClaims
-                                .Where(c => c.Type == "Permission")
-                                .Select(c => c.Value)
-                                .ToHashSet();
+                                    .Where(c => c.Type == "Permission")
+                                    .Select(c => c.Value)
+                                    .ToHashSet();
 
             foreach (var perm in allPermissions)
             {
@@ -75,24 +94,15 @@ namespace PosSystem.Data.Seeders
                 await userManager.AddToRoleAsync(superUser, roleName);
             }
 
-
             // =========================================================
-            // --- [NEW] STEP 6: SYNC TENANT ADMIN / MANAGER ROLE ---
+            // --- STEP 6: SYNC TENANT ADMIN / MANAGER ROLE ---
             // =========================================================
-            // We search for your standard tenant role (likely named "Admin" or "Manager")
-            // and forcefully inject the POS permissions so they can access the new module.
+            // This grants POS access to your existing "Admin" users automatically.
 
-            string tenantRoleName = "Admin"; // Change this to "Manager" if your role is named Manager
+            string tenantRoleName = "Admin";
 
             if (await roleManager.RoleExistsAsync(tenantRoleName))
             {
-                // Find all roles with this name (across different tenants if needed, or the global template)
-                // Since ASP.NET Identity roles are unique by Name (unless normalized), 
-                // we usually find the specific one. If you have multiple tenants with same role name,
-                // you might need to iterate. For now, we assume one standard Admin role or we loop.
-
-                // If you are using multi-tenant roles (where each tenant has their own "Admin" role),
-                // we should loop through ALL roles named "Admin".
                 var targetRoles = roleManager.Roles.Where(r => r.Name == tenantRoleName).ToList();
 
                 foreach (var targetRole in targetRoles)
@@ -106,13 +116,15 @@ namespace PosSystem.Data.Seeders
                     // 2. Define the NEW permissions they MUST have
                     var newPermissions = new List<string>
                     {
-                        AppPermissions.Pos.Access,           // The critical one
+                        AppPermissions.Pos.Access,
                         AppPermissions.Orders.View,
                         AppPermissions.Orders.Create,
                         AppPermissions.Orders.Edit,
                         AppPermissions.Orders.Delete,
                         AppPermissions.Inventory.View,
-                        AppPermissions.Inventory.Edit
+                        AppPermissions.Inventory.Edit,
+                        AppPermissions.Settings.Receipts,
+                        AppPermissions.Settings.Payments // [NEW] Ensure they can see Payment Settings
                     };
 
                     // 3. Assign missing ones

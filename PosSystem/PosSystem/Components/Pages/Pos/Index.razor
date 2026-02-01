@@ -9,14 +9,21 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.JSInterop
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Routing
+@using PosSystem.Components.Pages.Catalog.Products
+@using PosSystem.Components.Pages.Catalog.Categories
 
-@* [NEW] Inject StockService *@
+@inject IDbContextFactory<LocalDbContext> LocalDbFactory
+@inject IDbContextFactory<ApplicationDbContext> CloudDbFactory
+@inject IServiceScopeFactory ScopeFactory
 @inject PosSystem.Services.StockService StockService
 @inject PosSystem.Services.ReceiptService ReceiptPrinter
+@inject PosSystem.Services.IPaymentService PaymentService
+@inject NavigationManager Navigation
 
 @attribute [Authorize(Policy = "Permissions.Pos.Access")]
 
-@inject IUnitOfWork UnitOfWork
 @inject PosStateService PosState
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
@@ -24,8 +31,12 @@
 @inject TerminologyService Terminology
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthStateProvider
-
+@using Microsoft.AspNetCore.SignalR.Client
+@implements IAsyncDisposable
 <PageTitle>POS - @(PosState.CurrentUnit?.Name)</PageTitle>
+
+@* --- PREVENT EXIT IF DRAFTS EXIST --- *@
+<NavigationLock OnBeforeInternalNavigation="OnBeforeInternalNavigation" ConfirmExternalNavigation="@(ParkedOrders.Any())" />
 
 @if (!PosState.IsUnitSelected)
 {
@@ -56,10 +67,15 @@ else
     <MudGrid Class="h-100 pa-0 ma-0" Spacing="0">
 
         @* 1. LEFT PANE: CATEGORIES *@
-        <MudItem xs="2" Class="d-flex flex-column border-end mud-theme-surface" Style="height: calc(100vh - 50px);">
-            <div class="pa-3 text-center border-bottom">
+        @* 1. LEFT PANE: CATEGORIES & STATS *@
+        <MudItem xs="2" Class="d-flex flex-column border-end mud-theme-surface" Style="height: calc(100vh - 50px); overflow: hidden;">
+
+            @* HEADER *@
+            <div class="pa-3 text-center border-bottom bg-surface">
                 <MudText Typo="Typo.button" Color="Color.Primary"><b>CATEGORIES</b></MudText>
             </div>
+
+            @* CATEGORY LIST (Scrollable Area) *@
             <div class="flex-grow-1 overflow-auto">
                 <MudList T="string" SelectedValue="SelectedCategory" Clickable="true" Dense="true" Class="py-0">
                     <MudListItem Text="ALL ITEMS" OnClick="@(() => FilterCategory("All"))"
@@ -72,25 +88,79 @@ else
                 </MudList>
             </div>
 
-            @* Offline/Sync Status Footer *@
-            <div class="pa-2 border-top text-center mud-theme-surface">
-                <MudChip T="string" Size="Size.Small" Color="@(SyncQueue.Any() ? Color.Warning : Color.Success)" Variant="Variant.Filled" Class="w-100">
-                    @(SyncQueue.Any() ? $"{SyncQueue.Count} Pending Sync" : "System Online")
-                </MudChip>
+            @* BOTTOM: DAILY STATUS (Pinned) *@
+            <div class="border-top bg-surface pa-0">
+
+                @* Sync Status *@
+                <div class="py-1 text-center" style="min-height: 20px;">
+                    @if (SyncQueueCount > 0)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Info" Class="d-flex align-center justify-center gap-1">
+                            <MudProgressCircular Indeterminate="true" Size="Size.Small" Class="ms-n1" Style="height:12px;width:12px;" />
+                            Syncing @SyncQueueCount...
+                        </MudText>
+                    }
+                    else if (ShowSyncComplete)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Success">Sync Complete</MudText>
+                    }
+                </div>
+
+                <MudDivider />
+
+                @* Daily Stats Content *@
+                <div class="pa-2">
+                    <MudText Typo="Typo.caption" Align="Align.Center" Class="d-block mb-1 text-muted" Style="font-size: 10px; font-weight:700; letter-spacing: 0.5px;">TODAY'S SALES</MudText>
+
+                    <div class="d-flex gap-2">
+                        @* Opening Balance *@
+                        <MudPaper Class="pa-2 cursor-pointer hover-effect flex-1 d-flex flex-column align-center justify-center border-1"
+                                  Elevation="0" Outlined="true" OnClick="SetOpeningBalance">
+                            <MudText Typo="Typo.caption" Color="Color.Secondary" Style="font-size: 10px;">Opening</MudText>
+                            <MudText Typo="Typo.subtitle2" Style="font-weight:700;">@DailyOpeningBalance.ToString("0.##")</MudText>
+                        </MudPaper>
+
+                        @* Total Sales *@
+                        <MudPaper Class="pa-2 flex-1 d-flex flex-column align-center justify-center border-1"
+                                  Elevation="0" Outlined="true" Style="background-color: var(--mud-palette-success-hover); border-color: transparent;">
+                            <MudText Typo="Typo.caption" Color="Color.Success" Style="font-size: 10px;">Sales</MudText>
+                            <MudText Typo="Typo.subtitle2" Color="Color.Success" Style="font-weight:700;">@DailyTotalSales.ToString("0.##")</MudText>
+                        </MudPaper>
+                    </div>
+
+                    <div class="d-flex justify-space-between mt-2 px-1">
+                        <MudText Typo="Typo.caption" Color="Color.Default">Expected Cash:</MudText>
+                        <MudText Typo="Typo.caption" Style="font-weight:bold;">@CurrencySymbol@((DailyOpeningBalance + DailyCashSales).ToString("0.##"))</MudText>
+                    </div>
+                </div>
             </div>
         </MudItem>
 
         @* 2. CENTER PANE: PRODUCT GRID *@
         <MudItem xs="6" Class="d-flex flex-column mud-theme-background" Style="height: calc(100vh - 50px);">
-            @* Search Bar *@
-            <div class="pa-3 border-bottom d-flex gap-2 mud-theme-surface">
+            <div class="pa-3 border-bottom d-flex gap-2 mud-theme-surface align-center">
                 <MudTextField @bind-Value="SearchTerm" Placeholder="Search Product or SKU..."
                               Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
                               Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true"
+                              Class="flex-grow-1"
                               TextChanged="OnSearchChanged" />
+                <AuthorizeView Policy="Permissions.Products.Create">
+                    <MudTooltip Text="New Product">
+                        <MudIconButton Icon="@Icons.Material.Filled.AddBox" Color="Color.Secondary" OnClick="OpenProductDialog" Variant="Variant.Filled" Size="Size.Small" />
+                    </MudTooltip>
+                </AuthorizeView>
+
+                <AuthorizeView Policy="Permissions.Categories.Create">
+                    <MudTooltip Text="New Category">
+                        <MudIconButton Icon="@Icons.Material.Filled.Category" Color="Color.Tertiary" OnClick="OpenCategoryDialog" Variant="Variant.Filled" Size="Size.Small" />
+                    </MudTooltip>
+                </AuthorizeView>
+
+                <MudTooltip Text="Recent Orders">
+                    <MudIconButton Icon="@Icons.Material.Filled.History" Color="Color.Primary" OnClick="OpenRecentOrders" Variant="Variant.Outlined" />
+                </MudTooltip>
             </div>
 
-            @* Grid *@
             <div class="flex-grow-1 overflow-auto pa-3">
                 <MudGrid Spacing="2">
                     @foreach (var product in FilteredProducts)
@@ -99,8 +169,6 @@ else
                             @{
                                 int stock = 0;
                                 bool isOutOfStock = false;
-
-                                // Only calculate stock logic if the item actually TRACKS stock
                                 if (product.TrackStock)
                                 {
                                     stock = ProductStock.ContainsKey(product.Id) ? ProductStock[product.Id] : 0;
@@ -113,7 +181,6 @@ else
                                       @onclick="() => AddToCart(product)"
                                       Style="@(isOutOfStock ? "opacity:0.6; pointer-events:none;" : "")">
 
-                                @* 1. STOCK BADGE: Only show if TrackStock is TRUE *@
                                 @if (product.TrackStock)
                                 {
                                     <MudChip T="string" Size="Size.Small"
@@ -122,12 +189,6 @@ else
                                              Style="position:absolute; top:2px; right:2px; font-size:10px; height:18px;">
                                         @stock
                                     </MudChip>
-                                }
-                                @* 2. SERVICE BADGE: Optional, helps identify non-stock items *@
-                                else
-                                {
-                                    <MudIcon Icon="@Icons.Material.Filled.ConfirmationNumber"
-                                             Style="position:absolute; top:2px; right:2px; font-size:16px; opacity:0.5;" />
                                 }
 
                                 <MudText Typo="Typo.body2" Align="Align.Center" Style="font-weight:600; line-height:1.2; height: 35px; overflow:hidden;">
@@ -146,8 +207,6 @@ else
 
         @* 3. RIGHT PANE: CART & CHECKOUT *@
         <MudItem xs="4" Class="d-flex flex-column border-start shadow-lg mud-theme-surface" Style="height: calc(100vh - 50px); z-index: 10;">
-
-            @* Customer & Actions Header *@
             <div class="pa-2 border-bottom d-flex align-center justify-space-between">
                 <div class="d-flex align-center cursor-pointer hover-bg rounded pa-1" @onclick="OpenCustomerDialog" style="flex:1;">
                     <MudAvatar Color="Color.Primary" Size="Size.Small" Class="mr-2">
@@ -159,31 +218,24 @@ else
                     </div>
                 </div>
 
-                <div class="d-flex gap-1">
-                    <MudTooltip Text="Park/Hold Order">
-                        <MudIconButton Icon="@Icons.Material.Filled.PauseCircle" Color="Color.Warning" OnClick="ParkOrder" Size="Size.Medium" Disabled="@(!CartItems.Any())" />
-                    </MudTooltip>
-                    @if (ParkedOrders.Any())
-                    {
-                        <MudBadge Content="@ParkedOrders.Count" Color="Color.Error" Overlap="true" Class="mx-2">
-                            <MudIconButton Icon="@Icons.Material.Filled.RestorePage" OnClick="ShowParkedOrders" Size="Size.Medium" />
-                        </MudBadge>
-                    }
-                </div>
+                <MudTooltip Text="Hold Bill (Draft)">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Warning" Size="Size.Small" StartIcon="@Icons.Material.Filled.Pause" OnClick="ParkOrder" Disabled="@(!CartItems.Any())">
+                        HOLD
+                    </MudButton>
+                </MudTooltip>
             </div>
 
-            @* Cart Items List *@
-            <div class="flex-grow-1 overflow-auto pa-0">
+            <div class="flex-grow-1 overflow-auto pa-0 d-flex flex-column">
                 @if (!CartItems.Any())
                 {
-                    <div class="d-flex flex-column align-center justify-center h-100 text-muted">
+                    <div class="d-flex flex-column align-center justify-center flex-grow-1 text-muted">
                         <MudIcon Icon="@Icons.Material.Filled.ShoppingCart" Size="Size.Large" Style="opacity:0.2; width: 80px; height: 80px;" />
                         <MudText Class="mt-2">No Items Added</MudText>
                     </div>
                 }
                 else
                 {
-                    <MudList T="CartItem" Dense="true" Class="px-2">
+                    <MudList T="CartItem" Dense="true" Class="px-2 flex-grow-1">
                         @foreach (var item in CartItems)
                         {
                             <MudListItem Class="py-2 border-bottom-dashed">
@@ -206,19 +258,31 @@ else
                         }
                     </MudList>
                 }
+
+                @* DRAFTS / HELD BILLS SECTION *@
+                @if (ParkedOrders.Any())
+                {
+                    <div class="pa-2 bg-primary-light border-top">
+                        <div class="d-flex justify-space-between align-center mb-1">
+                            <MudText Typo="Typo.caption" Style="font-weight:bold;">HELD BILLS (@ParkedOrders.Count)</MudText>
+                            @if (ParkedOrders.Count > 3)
+                            {
+                                <MudLink Typo="Typo.caption" OnClick="OpenDraftsDialog">View All</MudLink>
+                            }
+                        </div>
+                        <div class="d-flex gap-2 overflow-auto" style="white-space:nowrap;">
+                            @foreach (var draft in ParkedOrders.Take(3))
+                            {
+                                <MudChip T="string" OnClick="@(() => RestoreDraft(draft))" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Class="cursor-pointer">
+                                    @(draft.CustomerName ?? "Guest") - @CurrencySymbol@draft.TotalAmount.ToString("0.##")
+                                </MudChip>
+                            }
+                        </div>
+                    </div>
+                }
             </div>
 
-            @* Payment Footer *@
-            <div class="pa-3 border-top mud-theme-surface" style="box-shadow: 0 -2px 5px rgba(0,0,0,0.05);">
-                <div class="d-flex justify-space-between mb-1">
-                    <MudText Typo="Typo.body2">Subtotal</MudText>
-                    <MudText Typo="Typo.body2">@CurrencySymbol@CartTotal.ToString("N2")</MudText>
-                </div>
-                <div class="d-flex justify-space-between mb-1">
-                    <MudText Typo="Typo.body2">Tax</MudText>
-                    <MudText Typo="Typo.body2">@CurrencySymbol 0.00</MudText>
-                </div>
-                <MudDivider Class="my-2" />
+            <div class="pa-3 border-top mud-theme-surface">
                 <div class="d-flex justify-space-between mb-3">
                     <MudText Typo="Typo.h6"><b>TOTAL</b></MudText>
                     <MudText Typo="Typo.h4" Color="Color.Success"><b>@CurrencySymbol@CartTotal.ToString("N2")</b></MudText>
@@ -226,9 +290,7 @@ else
 
                 <MudGrid Spacing="1">
                     <MudItem xs="4">
-                        <MudButton Variant="Variant.Outlined" Color="Color.Error" FullWidth="true" OnClick="ClearCart" Style="height:50px;">
-                            VOID
-                        </MudButton>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Error" FullWidth="true" OnClick="ClearCart" Style="height:50px;">VOID</MudButton>
                     </MudItem>
                     <MudItem xs="8">
                         <MudButton Variant="Variant.Filled" Color="Color.Success" FullWidth="true" Style="height:50px;"
@@ -241,39 +303,96 @@ else
         </MudItem>
     </MudGrid>
 
-    @* --- DIALOGS --- *@
+    @* Payment Dialog *@
+    // <MudDialog @bind-Visible="isPaymentDialogVisible" Options="dialogOptions">
+    //     <DialogContent>
+    //         <MudText Typo="Typo.h5" Class="mb-4 text-center">Amount Due: <b>@CurrencySymbol@CartTotal.ToString("N2")</b></MudText>
 
+    //         @if (isProcessingPayment)
+    //         {
+    //             <div class="d-flex flex-column align-center py-4">
+    //                 <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    //                 <MudText Class="mt-2">Waiting for payment...</MudText>
+    //             </div>
+    //         }
+    //         else
+    //         {
+    //             <MudGrid>
+    //                 <MudItem xs="6">
+    //                     <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-6 d-flex flex-column gap-2" OnClick="@(() => ProcessPayment("Cash"))">
+    //                         <MudIcon Icon="@Icons.Material.Filled.Money" Size="Size.Large" Color="Color.Success" />
+    //                         <MudText>CASH</MudText>
+    //                     </MudButton>
+    //                 </MudItem>
+    //                 <MudItem xs="6">
+    //                     @* [UPDATED] Calls Razorpay Logic *@
+    //                     <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-6 d-flex flex-column gap-2" OnClick="InitiateRazorpayPayment">
+    //                         <MudIcon Icon="@Icons.Material.Filled.QrCode2" Size="Size.Large" Color="Color.Primary" />
+    //                         <MudText>UPI / QR</MudText>
+    //                     </MudButton>
+    //                 </MudItem>
+    //             </MudGrid>
+    //         }
+    //     </DialogContent>
+    //     <DialogActions>
+    //         <MudButton OnClick="() => isPaymentDialogVisible = false" Disabled="@isProcessingPayment">Cancel</MudButton>
+    //     </DialogActions>
+    // </MudDialog>
     @* Payment Dialog *@
     <MudDialog @bind-Visible="isPaymentDialogVisible" Options="dialogOptions">
         <DialogContent>
-            <MudText Typo="Typo.h5" Class="mb-4 text-center">Amount Due: <b>@CurrencySymbol@CartTotal.ToString("N2")</b></MudText>
+            <MudText Typo="Typo.h5" Class="mb-4 text-center">Due: <b>@CurrencySymbol@CartTotal.ToString("N2")</b></MudText>
 
-            <MudGrid>
-                <MudItem xs="6">
-                    <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-6 d-flex flex-column gap-2" OnClick="@(() => ProcessPayment("Cash"))">
-                        <MudIcon Icon="@Icons.Material.Filled.Money" Size="Size.Large" Color="Color.Success" />
-                        <MudText>CASH</MudText>
-                    </MudButton>
-                </MudItem>
-                <MudItem xs="6">
-                    <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-6 d-flex flex-column gap-2" OnClick="@(() => ProcessPayment("UPI"))">
-                        <MudIcon Icon="@Icons.Material.Filled.QrCode2" Size="Size.Large" Color="Color.Primary" />
-                        <MudText>UPI / QR</MudText>
-                    </MudButton>
-                </MudItem>
-                <MudItem xs="12">
-                    <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-4 d-flex align-center justify-center gap-2" OnClick="@(() => ProcessPayment("Card"))">
-                        <MudIcon Icon="@Icons.Material.Filled.CreditCard" />
-                        <MudText>CREDIT / DEBIT CARD</MudText>
-                    </MudButton>
-                </MudItem>
-            </MudGrid>
+            @if (isListeningForWebhook)
+            {
+                @* --- NEW STATE: LISTENING FOR WEBHOOK --- *@
+                <MudPaper Class="pa-4 border-2 mud-border-primary border-dashed d-flex flex-column align-center gap-3">
+                    <MudProgressCircular Indeterminate="true" Size="Size.Medium" Color="Color.Primary" />
+                    <MudText Typo="Typo.h6" Color="Color.Primary">Listening for Payment...</MudText>
+                    <MudText Typo="Typo.body2">Customer should scan the <b>Store QR Code</b> now.</MudText>
+
+                    <MudAlert Severity="Severity.Info" Dense="true" Class="mt-2">
+                        Waiting for exactly <b>@CurrencySymbol@CartTotal.ToString("N2")</b>
+                    </MudAlert>
+                </MudPaper>
+            }
+            else if (isProcessingPayment)
+            {
+                <div class="d-flex flex-column align-center py-4">
+                    <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+                    <MudText Class="mt-2">Processing...</MudText>
+                </div>
+            }
+            else
+            {
+                <MudGrid>
+                    <MudItem xs="4">
+                        <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-6 d-flex flex-column gap-2" OnClick="@(() => ProcessPayment("Cash"))">
+                            <MudIcon Icon="@Icons.Material.Filled.Money" Size="Size.Large" Color="Color.Success" />
+                            <MudText>CASH</MudText>
+                        </MudButton>
+                    </MudItem>
+                    <MudItem xs="4">
+                        <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-6 d-flex flex-column gap-2" OnClick="InitiateRazorpayPayment">
+                            <MudIcon Icon="@Icons.Material.Filled.Laptop" Size="Size.Large" Color="Color.Info" />
+                            <MudText>ONLINE</MudText>
+                        </MudButton>
+                    </MudItem>
+
+                    @* --- NEW BUTTON: VERIFY QR --- *@
+                    <MudItem xs="4">
+                        <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-6 d-flex flex-column gap-2" OnClick="StartWebhookListener">
+                            <MudIcon Icon="@Icons.Material.Filled.QrCodeScanner" Size="Size.Large" Color="Color.Primary" />
+                            <MudText>VERIFY QR</MudText>
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+            }
         </DialogContent>
         <DialogActions>
-            <MudButton OnClick="() => isPaymentDialogVisible = false">Cancel</MudButton>
+            <MudButton OnClick="CancelPaymentDialog" Disabled="@isProcessingPayment">Cancel</MudButton>
         </DialogActions>
     </MudDialog>
-
     @* Customer Dialog *@
     <MudDialog @bind-Visible="isCustomerDialogVisible">
         <DialogContent>
@@ -288,7 +407,6 @@ else
 }
 
 <style>
-    /* Use theme variables so these change automatically in Dark Mode */
     .hover-effect:active {
         background-color: var(--mud-palette-action-default-hover);
         transform: scale(0.98);
@@ -300,7 +418,6 @@ else
     }
 
     .bg-primary-light {
-        /* Use a transparent tint of the primary color. Works in both modes. */
         background-color: rgba(var(--mud-palette-primary-rgb), 0.12);
         color: var(--mud-palette-primary);
         font-weight: bold;
@@ -310,51 +427,152 @@ else
     .border-bottom-dashed {
         border-bottom: 1px dashed var(--mud-palette-lines-default);
     }
+
+    .animate-fade {
+        animation: fadeout 3s forwards;
+    }
+
+    @@keyframes fadeout {
+        0% {
+            opacity: 1;
+        }
+
+        70% {
+            opacity: 1;
+        }
+
+        100% {
+            opacity: 0;
+            display: none;
+        }
+    }
 </style>
 
 @code {
     private bool isLoading = true;
     private List<Unit> AvailableUnits = new();
-
-    // Data
     private List<Product> AllProducts = new();
     private List<Product> FilteredProducts = new();
     private List<ItemCategory> Categories = new();
     private List<CartItem> CartItems = new();
 
-    // Features
+    // Sync Status
+    private int SyncQueueCount = 0;
+    private bool ShowSyncComplete = false;
+    private int _lastSyncCount = 0;
+
+    // Drafts
     private List<Order> ParkedOrders = new();
-    private List<Order> SyncQueue = new();
+
     private string SearchTerm = "";
     private string SelectedCategory = "All";
     private string CurrencySymbol = "$";
-
-    // Customer
     private string? CurrentCustomerName;
     private string? CurrentCustomerPhone;
     private string tempCustName = "";
     private string tempCustPhone = "";
     private bool isCustomerDialogVisible = false;
-
-    // Payment
     private bool isPaymentDialogVisible = false;
+    private bool isProcessingPayment = false; // [NEW] Loading State for Razorpay
 
-    // Maps ProductId -> Current Stock Quantity
     private Dictionary<string, int> ProductStock = new();
     private DialogOptions dialogOptions = new() { MaxWidth = MaxWidth.Small, FullWidth = true };
     private decimal CartTotal => CartItems.Sum(i => i.Quantity * i.UnitPrice);
 
+    private System.Threading.Timer? _syncTimer;
+
+    // [NEW] To handle JS callbacks
+    private DotNetObjectReference<Index> objRef;
+    private HubConnection? hubConnection;
+    private bool isListeningForWebhook = false;
+    private decimal DailyOpeningBalance = 0;
+    private decimal DailyTotalSales = 0;
+    private decimal DailyCashSales = 0;
     protected override async Task OnInitializedAsync()
     {
-        AvailableUnits = (await UnitOfWork.Units.GetAllAsync()).ToList();
+        objRef = DotNetObjectReference.Create(this); // Init reference
+
+        using var scope = ScopeFactory.CreateScope();
+        var safeUow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        AvailableUnits = (await safeUow.Units.GetAllAsync()).ToList();
+
         CurrencySymbol = Terminology.GetText("CurrencySymbol", "$");
         PosState.OnChange += StateHasChanged;
 
         await CheckForAutoLogin();
+
+        // Sync Poller (5s)
+        _syncTimer = new System.Threading.Timer(async _ =>
+        {
+            await UpdateSyncStatus();
+            await InvokeAsync(StateHasChanged);
+        }, null, 0, 5000);
+        await LoadDailyStats();
         isLoading = false;
+        try
+        {
+            hubConnection = new HubConnectionBuilder()
+                .WithUrl(Navigation.ToAbsoluteUri("/paymentHub"))
+                .WithAutomaticReconnect()
+                .Build();
+
+            // Register the listener: Backend calls "PaymentVerified"
+            hubConnection.On<decimal, string, string>("PaymentVerified", async (amount, paymentId, payerContact) =>
+            {
+                // Only process if we are currently listening AND amount matches
+                if (isListeningForWebhook && isPaymentDialogVisible)
+                {
+                    if (amount == CartTotal)
+                    {
+                        await InvokeAsync(async () =>
+                        {
+                            Snackbar.Add($"Received {CurrencySymbol}{amount} from {payerContact}", Severity.Success);
+                            await ProcessPayment("UPI (QR Webhook)", paymentId);
+                        });
+                    }
+                }
+            });
+
+            await hubConnection.StartAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("SignalR Error: " + ex.Message);
+        }
     }
 
-    // --- AUTO-LOGIN LOGIC ---
+    private async Task UpdateSyncStatus()
+    {
+        try
+        {
+            using var localDb = await LocalDbFactory.CreateDbContextAsync();
+            int currentCount = await localDb.Orders.CountAsync(o => !o.IsSynced);
+
+            // Logic to show "Sync Complete" message
+            if (currentCount == 0 && _lastSyncCount > 0)
+            {
+                ShowSyncComplete = true;
+            }
+            else if (currentCount > 0)
+            {
+                ShowSyncComplete = false;
+            }
+
+            SyncQueueCount = currentCount;
+            _lastSyncCount = currentCount;
+        }
+        catch { }
+    }
+
+    // --- NAVIGATION LOCK ---
+    private void OnBeforeInternalNavigation(LocationChangingContext context)
+    {
+        if (ParkedOrders.Any())
+        {
+            // Just prompt using standard browser confirm (via NavigationLock ConfirmExternalNavigation)
+        }
+    }
+
     private async Task CheckForAutoLogin()
     {
         if (PosState.IsUnitSelected && PosState.CurrentUnit != null)
@@ -362,136 +580,59 @@ else
             await LoadPosData(PosState.CurrentUnit);
             return;
         }
-
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var user = await UserManager.GetUserAsync(authState.User);
-
             if (user != null && !string.IsNullOrEmpty(user.DefaultUnitId))
             {
                 var assignedUnit = AvailableUnits.FirstOrDefault(u => u.Id == user.DefaultUnitId);
-                if (assignedUnit != null)
-                {
-                    await SelectUnit(assignedUnit);
-                }
+                if (assignedUnit != null) await SelectUnit(assignedUnit);
             }
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Auto-login error: " + ex.Message);
-        }
+        catch (Exception ex) { Console.WriteLine("Auto-login error: " + ex.Message); }
     }
 
     private async Task SelectUnit(Unit unit)
     {
-        try
-        {
-            isLoading = true;
-            PosState.SetUnit(unit);
-            await LoadPosData(unit);
-        }
-        catch (Exception ex)
-        {
-            Snackbar.Add("Error loading unit.", Severity.Error);
-        }
-        finally
-        {
-            isLoading = false;
-        }
+        try { isLoading = true; PosState.SetUnit(unit); await LoadPosData(unit); }
+        catch (Exception ex) { Snackbar.Add("Error loading unit.", Severity.Error); }
+        finally { isLoading = false; }
     }
 
     private async Task LoadPosData(Unit unit)
     {
-        Categories = (await UnitOfWork.Categories.GetAllAsync()).ToList();
-
-        // 1. Get Stock Links
-        var links = (await UnitOfWork.UnitProducts.FindAsync(x => x.UnitId == unit.Id)).ToList();
-
-        // FIX: Use 'StockQuantity' (from your entity) and handle nulls
-        ProductStock = links.ToDictionary(
-            k => k.ProductId,
-            v => (int)(v.StockQuantity ?? 0)
-        );
-
-        // 2. Load Products
-        var allDbProducts = await UnitOfWork.Products.GetAllAsync();
-
-        // 3. Filter Logic
-        AllProducts = allDbProducts.Where(p =>
-        {
-            if (!p.IsPosVisible) return false;
-            return true;
-        }).ToList();
-
+        using var scope = ScopeFactory.CreateScope();
+        var safeUow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        Categories = (await safeUow.Categories.GetAllAsync()).ToList();
+        var links = (await safeUow.UnitProducts.FindAsync(x => x.UnitId == unit.Id)).ToList();
+        ProductStock = links.ToDictionary(k => k.ProductId, v => (int)(v.StockQuantity ?? 0));
+        var allDbProducts = await safeUow.Products.GetAllAsync();
+        AllProducts = allDbProducts.Where(p => p.IsPosVisible).ToList();
         FilteredProducts = AllProducts;
     }
 
     private void AddToCart(Product product)
     {
-        // 1. Safety Check
         if (!product.IsPosVisible) return;
-
-        // 2. STOCK CHECK
         if (product.TrackStock)
         {
-            // Check the store-specific dictionary
             int currentStock = ProductStock.ContainsKey(product.Id) ? ProductStock[product.Id] : 0;
-
             var existingItem = CartItems.FirstOrDefault(x => x.ProductId == product.Id);
             int inCart = existingItem?.Quantity ?? 0;
-
-            if (inCart + 1 > currentStock)
-            {
-                Snackbar.Add($"Out of Stock! Only {currentStock} left at this location.", Severity.Warning);
-                return;
-            }
+            if (inCart + 1 > currentStock) { Snackbar.Add($"Out of Stock! Only {currentStock} left.", Severity.Warning); return; }
         }
-
-        // 3. Add to Cart
         var existing = CartItems.FirstOrDefault(x => x.ProductId == product.Id);
-        if (existing != null)
-        {
-            existing.Quantity++;
-        }
-        else
-        {
-            CartItems.Add(new CartItem
-            {
-                ProductId = product.Id,
-                ProductName = product.Name,
-                UnitPrice = product.BasePrice,
-                Quantity = 1
-            });
-        }
+        if (existing != null) existing.Quantity++;
+        else CartItems.Add(new CartItem { ProductId = product.Id, ProductName = product.Name, UnitPrice = product.BasePrice, Quantity = 1 });
     }
 
-    private void UpdateQty(CartItem item, int change)
-    {
-        item.Quantity += change;
-        if (item.Quantity <= 0) CartItems.Remove(item);
-    }
-
+    private void UpdateQty(CartItem item, int change) { item.Quantity += change; if (item.Quantity <= 0) CartItems.Remove(item); }
     private void RemoveItem(CartItem item) => CartItems.Remove(item);
+    private void ClearCart() { CartItems.Clear(); CurrentCustomerName = null; CurrentCustomerPhone = null; }
 
-    private void ClearCart()
-    {
-        CartItems.Clear();
-        CurrentCustomerName = null;
-        CurrentCustomerPhone = null;
-    }
-
-    // --- SEARCH ---
-    private void FilterCategory(string catId)
-    {
-        SelectedCategory = catId;
-        ApplyFilters();
-    }
-    private void OnSearchChanged(string text)
-    {
-        SearchTerm = text;
-        ApplyFilters();
-    }
+    private void FilterCategory(string catId) { SelectedCategory = catId; ApplyFilters(); }
+    private void OnSearchChanged(string text) { SearchTerm = text; ApplyFilters(); }
     private void ApplyFilters()
     {
         var query = AllProducts.AsEnumerable();
@@ -500,80 +641,334 @@ else
         FilteredProducts = query.ToList();
     }
 
-    // --- CUSTOMER ---
-    private void OpenCustomerDialog()
-    {
-        tempCustName = CurrentCustomerName ?? "";
-        tempCustPhone = CurrentCustomerPhone ?? "";
-        isCustomerDialogVisible = true;
-    }
-    private void SaveCustomer()
-    {
-        CurrentCustomerName = tempCustName;
-        CurrentCustomerPhone = tempCustPhone;
-        isCustomerDialogVisible = false;
-    }
+    private void OpenCustomerDialog() { tempCustName = CurrentCustomerName ?? ""; tempCustPhone = CurrentCustomerPhone ?? ""; isCustomerDialogVisible = true; }
+    private void SaveCustomer() { CurrentCustomerName = tempCustName; CurrentCustomerPhone = tempCustPhone; isCustomerDialogVisible = false; }
+    private void OpenPaymentDialog() => isPaymentDialogVisible = true;
 
-    // --- PARK / DRAFT ---
+    // --- DRAFTS LOGIC ---
     private void ParkOrder()
     {
         if (!CartItems.Any()) return;
-        var order = new Order
+
+        var draftItems = CartItems.Select(c => new OrderItem
         {
-            OrderNumber = $"DRAFT-{ParkedOrders.Count + 1}",
+            ProductId = c.ProductId,
+            ProductName = c.ProductName,
+            UnitPrice = c.UnitPrice,
+            Quantity = c.Quantity
+        }).ToList();
+
+        var draft = new Order
+        {
+            OrderNumber = $"DRAFT-{DateTime.Now:HHmm}",
             CustomerName = CurrentCustomerName,
             TotalAmount = CartTotal,
-            Status = "Parked",
-            UnitId = PosState.CurrentUnit?.Id ?? "",
-            TenantId = PosState.CurrentUnit?.TenantId ?? ""
+            Status = "Draft",
+            OrderItems = draftItems
         };
-        ParkedOrders.Add(order);
+
+        ParkedOrders.Add(draft);
         ClearCart();
-        Snackbar.Add("Order Parked", Severity.Info);
+        Snackbar.Add("Bill Held (Draft Saved)", Severity.Info);
     }
 
-    private void ShowParkedOrders()
+    private void RestoreDraft(Order draft)
     {
-        if (ParkedOrders.Any())
+        if (CartItems.Any())
         {
-            var last = ParkedOrders.Last();
-            Snackbar.Add($"Restored: {last.OrderNumber}", Severity.Success);
-            ParkedOrders.Remove(last);
+            Snackbar.Add("Please clear current cart before restoring a draft.", Severity.Warning);
+            return;
+        }
+
+        CurrentCustomerName = draft.CustomerName;
+        foreach (var item in draft.OrderItems)
+        {
+            CartItems.Add(new CartItem
+            {
+                ProductId = item.ProductId,
+                ProductName = item.ProductName,
+                UnitPrice = item.UnitPrice,
+                Quantity = item.Quantity
+            });
+        }
+
+        ParkedOrders.Remove(draft);
+        Snackbar.Add("Draft Restored", Severity.Success);
+    }
+
+    private void OpenDraftsDialog()
+    {
+        Snackbar.Add("Feature: Show all drafts dialog", Severity.Info);
+    }
+
+    private void OpenRecentOrders()
+    {
+        // 1. Safety Check: Ensure a unit is actually selected
+        if (PosState.CurrentUnit == null)
+        {
+            Snackbar.Add("System State Lost. Please refresh the page.", Severity.Warning);
+            return;
+        }
+
+        // 2. Pass the ID securely
+        var parameters = new DialogParameters { ["UnitId"] = PosState.CurrentUnit.Id };
+
+        // 3. Show Dialog
+        DialogService.Show<RecentOrdersDialog>("Recent Orders", parameters, new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+    }
+    // [NEW] Start Listening UI
+    private void StartWebhookListener()
+    {
+        isListeningForWebhook = true;
+        StateHasChanged();
+    }
+
+    // [NEW] Reset UI State
+    private void CancelPaymentDialog()
+    {
+        isListeningForWebhook = false;
+        isPaymentDialogVisible = false;
+        isProcessingPayment = false;
+    }
+    // --- DAILY STATS LOGIC ---
+
+    private async Task LoadDailyStats()
+    {
+        try
+        {
+            using var localDb = await LocalDbFactory.CreateDbContextAsync();
+
+            // [FIX] Use UTC to match database CreatedAt
+            var todayUtc = DateTime.UtcNow.Date;
+
+            // A. Calculate Sales (Using UTC)
+            var todayOrders = await localDb.Orders
+                .Where(o => o.CreatedAt >= todayUtc && o.Status != "Draft" && o.Status != "Void")
+                .Select(o => new { o.TotalAmount, o.PaymentMethod })
+                .ToListAsync();
+
+            DailyTotalSales = todayOrders.Sum(o => o.TotalAmount);
+            DailyCashSales = todayOrders.Where(o => o.PaymentMethod == "Cash").Sum(o => o.TotalAmount);
+
+            // B. Get Opening Balance
+            // Key format: "OpeningBalance_2023-10-27"
+            string key = $"OpeningBalance_{DateTime.Now:yyyy-MM-dd}"; // Key stays Local Date for user sanity
+            var setting = await localDb.SystemSettings.FirstOrDefaultAsync(s => s.Key == key);
+
+            if (setting != null && decimal.TryParse(setting.Value, out decimal val))
+            {
+                DailyOpeningBalance = val;
+            }
+            else
+            {
+                DailyOpeningBalance = 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Stats Error: " + ex.Message);
         }
     }
 
-    // --- PAYMENT ---
-    private void OpenPaymentDialog() => isPaymentDialogVisible = true;
-
-    // [UPDATED] Uses StockService for Deduction & Audit Logging
-    private async Task ProcessPayment(string method)
+    private async Task SetOpeningBalance()
     {
-        // 1. Close Dialog & Show Loading
+        // [FIX] Replaced JS Prompt with MudBlazor Input Dialog
+        var parameters = new DialogParameters();
+        parameters.Add("ContentText", "Enter total cash in drawer to start the day:");
+        parameters.Add("ButtonText", "Set Balance");
+        parameters.Add("Color", Color.Primary);
+
+        // We use a simple input dialog pattern here
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.ExtraSmall };
+
+        // Use the built-in 'Prompt' logic via a custom render or simple text field
+        // Since we don't have a specific 'InputDialog' file, we will inject a quick render fragment
+        // OR simply use the 'MessageBox' if you just want confirmation.
+        // BUT, you need INPUT.
+
+        // QUICKEST FIX: Use a simple JS prompt safely, OR create a proper dialog.
+        // Let's try the safest JS method first which works 100% without new files:
+
+        string input = await JS.InvokeAsync<string>("prompt", "Enter Opening Cash Amount:", DailyOpeningBalance.ToString());
+
+        if (!string.IsNullOrEmpty(input) && decimal.TryParse(input, out decimal newBalance))
+        {
+            await SaveOpeningBalance(newBalance);
+        }
+    }
+
+    private async Task SaveOpeningBalance(decimal amount)
+    {
+        try
+        {
+            using var localDb = await LocalDbFactory.CreateDbContextAsync();
+
+            // Key uses LOCAL date because "Opening Balance" is a concept for the Store's Day (not UTC)
+            string key = $"OpeningBalance_{DateTime.Now:yyyy-MM-dd}";
+
+            var setting = await localDb.SystemSettings.FirstOrDefaultAsync(s => s.Key == key);
+            if (setting == null)
+            {
+                localDb.SystemSettings.Add(new SystemSetting
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Key = key,
+                    Value = amount.ToString(),
+                    TenantId = PosState.CurrentUnit?.TenantId,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                setting.Value = amount.ToString();
+            }
+
+            await localDb.SaveChangesAsync();
+            DailyOpeningBalance = amount;
+            StateHasChanged();
+            Snackbar.Add("Opening Balance Updated", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Failed to save balance: " + ex.Message, Severity.Error);
+        }
+    }
+    // ==========================================
+    // RAZORPAY PAYMENT LOGIC
+    // ==========================================
+    private async Task InitiateRazorpayPayment()
+    {
+        isProcessingPayment = true;
+        StateHasChanged();
+
+        try
+        {
+            // 1. Get Public Key from Service
+            var keyId = await PaymentService.GetPublicKeyAsync();
+            if (string.IsNullOrEmpty(keyId))
+            {
+                Snackbar.Add("Online Payment not configured. Contact Admin.", Severity.Error);
+                isProcessingPayment = false;
+                return;
+            }
+
+            // 2. Create Order on Server
+            // Use a temporary receipt ID for Razorpay tracking
+            var receiptId = $"RCPT-{DateTime.Now.Ticks}";
+            var orderId = await PaymentService.CreateOrderAsync(CartTotal, receiptId);
+
+            // 3. Prepare JS Options
+            var options = new
+            {
+                key = keyId,
+                amount = (int)(CartTotal * 100), // In Paise
+                currency = "INR",
+                name = PosState.CurrentUnit?.Name ?? "Store",
+                description = $"Bill Payment #{receiptId}",
+                order_id = orderId,
+                prefill = new
+                {
+                    name = CurrentCustomerName ?? "",
+                    contact = CurrentCustomerPhone ?? ""
+                }
+            };
+
+            // 4. Open Checkout via JS
+            await JS.InvokeVoidAsync("razorpayInterop.openCheckout", options, objRef);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error initating payment: {ex.Message}", Severity.Error);
+            isProcessingPayment = false;
+        }
+    }
+    [JSInvokable]
+    public async Task OnRazorpaySuccess(string rzpOrderId, string rzpPaymentId, string rzpSignature)
+    {
+        // DEBUG LOG 1
+        Snackbar.Add("Payment received from Razorpay. Verifying...", Severity.Info);
+
+        try
+        {
+            // 5. Verify Signature on Server
+            bool isValid = await PaymentService.VerifyPaymentSignature(rzpOrderId, rzpPaymentId, rzpSignature);
+
+            if (isValid)
+            {
+                // DEBUG LOG 2
+                Snackbar.Add("Signature Valid! Saving Order...", Severity.Success);
+
+                // IMPORTANT: Wrap in InvokeAsync to ensure UI updates on the correct thread
+                await InvokeAsync(async () =>
+                {
+                    await ProcessPayment("Online (Razorpay)", rzpPaymentId);
+                });
+            }
+            else
+            {
+                // DEBUG LOG 3 - FAILURE
+                Snackbar.Add("SECURITY ALERT: Payment Signature Invalid! Order not saved.", Severity.Error);
+                isProcessingPayment = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"CRITICAL ERROR in Callback: {ex.Message}", Severity.Error);
+            Console.WriteLine(ex.ToString());
+            isProcessingPayment = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+    // [JSInvokable]
+    // public async Task OnRazorpaySuccess(string rzpOrderId, string rzpPaymentId, string rzpSignature)
+    // {
+    //     // 5. Verify Signature on Server
+    //     bool isValid = await PaymentService.VerifyPaymentSignature(rzpOrderId, rzpPaymentId, rzpSignature);
+
+    //     if (isValid)
+    //     {
+    //         // If valid, save order with Razorpay Payment ID
+    //         await ProcessPayment("Online (Razorpay)", rzpPaymentId);
+    //     }
+    //     else
+    //     {
+    //         Snackbar.Add("Payment Verification Failed! Security Alert.", Severity.Error);
+    //         isProcessingPayment = false;
+    //         StateHasChanged();
+    //     }
+    // }
+
+    // --- GENERIC PAYMENT PROCESSOR ---
+    private async Task ProcessPayment(string method, string? referenceId = null)
+    {
         isPaymentDialogVisible = false;
+        isProcessingPayment = false; // Reset UI
+        isListeningForWebhook = false;
         Snackbar.Add("Processing Transaction...", Severity.Info);
 
         try
         {
-            // 2. Build the Order Object
+            using var localDb = await LocalDbFactory.CreateDbContextAsync();
+
             var newOrder = new Order
             {
                 Id = Guid.NewGuid().ToString(),
-                OrderNumber = $"ORD-{DateTime.UtcNow:yyyyMMdd}-{DateTime.UtcNow.Ticks.ToString().Substring(10)}",
+                OrderNumber = $"ORD-{DateTime.Now:yyyyMMdd}-{DateTime.Now.Ticks.ToString().Substring(10)}",
                 TotalAmount = CartTotal,
                 PaymentMethod = method,
+                PaymentReferenceId = referenceId, // [NEW] Store Razorpay ID
                 Status = "Completed",
                 CreatedAt = DateTime.UtcNow,
                 CustomerName = CurrentCustomerName,
                 CustomerPhone = CurrentCustomerPhone,
                 UnitId = PosState.CurrentUnit?.Id ?? "",
                 TenantId = PosState.CurrentUnit?.TenantId ?? "",
-                IsSynced = true
+                IsSynced = false
             };
 
-            // 3. Process Cart Items
             foreach (var item in CartItems)
             {
-                // A. Add to Order
                 newOrder.OrderItems.Add(new OrderItem
                 {
                     Id = Guid.NewGuid().ToString(),
@@ -585,49 +980,35 @@ else
                     CreatedAt = DateTime.UtcNow,
                     TenantId = newOrder.TenantId
                 });
-
-                // B. DEDUCT STOCK & LOG MOVEMENT (Only if Tracked)
-                // We check our local product list to see if this item tracks stock
-                var productDef = AllProducts.FirstOrDefault(p => p.Id == item.ProductId);
-
-                if (productDef != null && productDef.TrackStock)
-                {
-                    // Call the Service:
-                    // - Deducts stock (UnitProduct table)
-                    // - Logs history (StockMovements table)
-                    // - Amount is negative because we are selling
-                    await StockService.AdjustStockAsync(
-                        newOrder.UnitId,
-                        item.ProductId,
-                        -item.Quantity,          // Negative amount
-                        "Sale",                  // Type
-                        $"Order {newOrder.OrderNumber}", // Reason
-                        "System/Cashier",        // User
-                        newOrder.Id              // Reference ID
-                    );
-
-                    // Update UI Badge locally
-                    if (ProductStock.ContainsKey(item.ProductId))
-                    {
-                        ProductStock[item.ProductId] -= item.Quantity;
-                    }
-                }
+                if (ProductStock.ContainsKey(item.ProductId)) ProductStock[item.ProductId] -= item.Quantity;
             }
 
-            // 4. Save to Database (REAL SAVE)
-            // This saves the Order AND the Stock changes (queued by the Service) in one transaction
-            await UnitOfWork.Orders.AddAsync(newOrder);
-            await UnitOfWork.CompleteAsync();
+            localDb.Orders.Add(newOrder);
+            await localDb.SaveChangesAsync();
 
-            // 5. Success Feedback
+            // Background Stock Update
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = ScopeFactory.CreateScope();
+                    var bgStockService = scope.ServiceProvider.GetRequiredService<StockService>();
+                    foreach (var item in CartItems)
+                    {
+                        await bgStockService.AdjustStockAsync(newOrder.UnitId, item.ProductId, -item.Quantity, "Sale", $"POS {newOrder.OrderNumber}", "Cashier", newOrder.Id);
+                    }
+                }
+                catch (Exception ex) { Console.WriteLine("Background Stock Update Failed: " + ex.Message); }
+            });
+
             Snackbar.Add($"Order {newOrder.OrderNumber} Completed!", Severity.Success);
 
-            // 6. Print Receipt
             string storeName = PosState.CurrentUnit?.Name ?? "My POS Store";
             await ReceiptPrinter.PrintAsync(newOrder, storeName, "123 Main St");
 
-            // 7. Reset UI
             ClearCart();
+            await UpdateSyncStatus();
+            await LoadDailyStats();
             StateHasChanged();
         }
         catch (Exception ex)
@@ -637,12 +1018,58 @@ else
         }
     }
 
-    public void Dispose() => PosState.OnChange -= StateHasChanged;
+    private async Task OpenProductDialog()
+    {
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
+        var dialog = DialogService.Show<ProductDialog>("Create Product", options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var safeUow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var allDbProducts = await safeUow.Products.GetAllAsync();
+            AllProducts = allDbProducts.Where(p => p.IsPosVisible).ToList();
+            FilteredProducts = AllProducts;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OpenCategoryDialog()
+    {
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = DialogService.Show<CategoryDialog>("Create Category", options);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var safeUow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            Categories = (await safeUow.Categories.GetAllAsync()).ToList();
+            StateHasChanged();
+        }
+    }
+    public async ValueTask DisposeAsync()
+    {
+        objRef?.Dispose();
+        PosState.OnChange -= StateHasChanged;
+        _syncTimer?.Dispose();
+
+        // Clean up SignalR
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+    // public void Dispose()
+    // {
+    //     objRef?.Dispose(); // Dispose JS Reference
+    //     PosState.OnChange -= StateHasChanged;
+    //     _syncTimer?.Dispose();
+    // }
 
     public class CartItem
     {
-        public string ProductId { get; set; }
-        public string ProductName { get; set; }
+        public string ProductId { get; set; } = string.Empty;
+        public string ProductName { get; set; } = string.Empty;
         public decimal UnitPrice { get; set; }
         public int Quantity { get; set; }
     }

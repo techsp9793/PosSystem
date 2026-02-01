@@ -21,7 +21,9 @@
         </MudText>
 
         <MudSpacer />
-
+        <MudIconButton Icon="@(ThemeService.IsDarkMode? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)"
+                       Color="Color.Inherit"
+                       OnClick="@ToggleTheme" />
         <MudTooltip Text="Exit to Dashboard">
             <MudIconButton Icon="@Icons.Material.Filled.ExitToApp"
                            Color="Color.Inherit"
@@ -47,7 +49,10 @@
         PosState.ClearUnit();
         Navigation.NavigateTo("/dashboard", forceLoad: true);
     }
-
+    private async Task ToggleTheme()
+    {
+        await ThemeService.SetDarkModeAsync(!ThemeService.IsDarkMode);
+    }
     public void Dispose()
     {
         PosState.OnChange -= StateHasChanged;

@@ -5,14 +5,15 @@
 @using PosSystem.Data
 @using PosSystem.Services
 @using Microsoft.AspNetCore.Authorization
+@using System.IO
+@using PosSystem.Permissions
 
-@attribute [Authorize(Policy = "Permissions.Tenants.Edit")]
+@attribute [Authorize(Policy = AppPermissions.Settings.Receipts)]
 
 @inject IDbContextFactory<ApplicationDbContext> DbFactory
 @inject ITenantService TenantService
 @inject ISnackbar Snackbar
 
-@* Use the Admin layout for settings pages *@
 @layout PosSystem.Components.Layout.MainLayout
 
 <PageTitle>Receipt Configuration</PageTitle>
@@ -20,7 +21,7 @@
 <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
     <MudText Typo="Typo.h5" Class="mb-4">Receipt Configuration</MudText>
     <MudText Typo="Typo.body2" Class="mb-6 text-muted">
-        Customize how your printed receipts look.
+        Configure your thermal printer settings and branding.
     </MudText>
 
     @if (isLoading)
@@ -29,80 +30,144 @@
     }
     else
     {
-        <MudPaper Class="pa-4">
-            <MudForm>
-                <MudGrid>
-                    @* 1. Header / Business Name *@
-                    <MudItem xs="12">
-                        <MudTextField @bind-Value="Config.Header" Label="Receipt Header (Business Name)" Variant="Variant.Outlined" />
-                    </MudItem>
+        <MudGrid>
+            @* --- LEFT COLUMN: SETTINGS --- *@
+            <MudItem xs="12" md="7">
+                <MudPaper Class="pa-4">
+                    <MudForm>
+                        <MudGrid>
+                            <MudItem xs="12">
+                                <MudTextField @bind-Value="Config.Header" Label="Receipt Header (Business Name)" Variant="Variant.Outlined" />
+                            </MudItem>
 
-                    @* 2. Logo URL *@
-                    <MudItem xs="12">
-                        <MudTextField @bind-Value="Config.LogoUrl"
-                                      Label="Logo Image URL"
-                                      HelperText="Paste a link to your logo image"
-                                      Variant="Variant.Outlined"
-                                      Adornment="Adornment.End"
-                                      AdornmentIcon="@Icons.Material.Filled.Image" />
-                    </MudItem>
+                            @* 2. Logo Uploader *@
+                            <MudItem xs="12">
+                                <MudText Typo="Typo.caption">Logo Image</MudText>
+                                <div class="d-flex gap-2 align-center">
+                                    <MudFileUpload T="IBrowserFile" FilesChanged="UploadLogo">
+                                        <ActivatorContent>
+                                            <MudButton Variant="Variant.Filled"
+                                                       Color="Color.Primary"
+                                                       StartIcon="@Icons.Material.Filled.CloudUpload">
+                                                Upload Logo
+                                            </MudButton>
+                                        </ActivatorContent>
+                                    </MudFileUpload>
+                                    @if (!string.IsNullOrEmpty(Config.LogoBase64))
+                                    {
+                                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="ClearLogo" />
+                                    }
+                                </div>
+                                <MudText Typo="Typo.caption" Class="mud-text-secondary">Max size: 500KB. Black & White recommended.</MudText>
+                            </MudItem>
 
-                    @* 3. Footer Message *@
-                    <MudItem xs="12">
-                        <MudTextField @bind-Value="Config.FooterMessage"
-                                      Label="Footer Message"
-                                      Lines="3"
-                                      HelperText="e.g. 'No Refunds', 'Thank You'"
-                                      Variant="Variant.Outlined" />
-                    </MudItem>
+                            <MudItem xs="12">
+                                <MudText Typo="Typo.caption">Paper Width</MudText>
+                                <MudRadioGroup @bind-Value="Config.PaperSize">
+                                    <MudRadio Value="@("80mm")" Color="Color.Primary">80mm (Standard)</MudRadio>
+                                    <MudRadio Value="@("58mm")" Color="Color.Secondary">58mm (Narrow)</MudRadio>
+                                </MudRadioGroup>
+                            </MudItem>
 
-                    @* 4. Toggles *@
-                    <MudItem xs="12" sm="6">
-                        <MudSwitch @bind-Value="Config.ShowQrCode" Color="Color.Primary" Label="Print Verification QR Code?" />
-                    </MudItem>
-                    <MudItem xs="12" sm="6">
-                        <MudSwitch @bind-Value="Config.ShowTaxDetails" Color="Color.Primary" Label="Show Tax Breakdown?" />
-                    </MudItem>
+                            <MudItem xs="12">
+                                <MudTextField @bind-Value="Config.FooterMessage"
+                                              Label="Footer Message"
+                                              Lines="3"
+                                              HelperText="e.g. 'No Refunds', 'Thank You'"
+                                              Variant="Variant.Outlined" />
+                            </MudItem>
 
-                    <MudItem xs="12" Class="d-flex justify-end mt-4">
-                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveSettings">
-                            Save Configuration
-                        </MudButton>
-                    </MudItem>
-                </MudGrid>
-            </MudForm>
-        </MudPaper>
+                            <MudItem xs="12" sm="6">
+                                <MudSwitch @bind-Value="Config.ShowQrCode" Color="Color.Primary" Label="Print Verification QR" />
+                            </MudItem>
+                            <MudItem xs="12" sm="6">
+                                <MudSwitch @bind-Value="Config.ShowTaxDetails" Color="Color.Primary" Label="Show Tax Breakdown" />
+                            </MudItem>
 
-        @* Preview Section *@
-        <MudPaper Class="pa-4 mt-4 d-flex flex-column align-center" Style="max-width: 300px; margin: auto; border: 1px dashed #ccc;">
-            <MudText Typo="Typo.caption" Class="mb-2">PREVIEW</MudText>
+                            <MudItem xs="12" Class="d-flex justify-end mt-4">
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveSettings">
+                                    Save Configuration
+                                </MudButton>
+                            </MudItem>
+                        </MudGrid>
+                    </MudForm>
+                </MudPaper>
+            </MudItem>
 
-            @if (!string.IsNullOrEmpty(Config.LogoUrl))
-            {
-                <MudImage Src="@Config.LogoUrl" Width="80" Height="80" ObjectFit="ObjectFit.Contain" Class="mb-2" />
-            }
-            <MudText Typo="Typo.h6" Align="Align.Center">@Config.Header</MudText>
-            <MudText Typo="Typo.caption" Align="Align.Center">123 Street Name, City</MudText>
-            <MudDivider Class="my-2" Style="width:100%" />
-            <MudText Typo="Typo.body2">Item 1 .......... $10.00</MudText>
-            <MudText Typo="Typo.body2">Item 2 .......... $5.00</MudText>
-            <MudDivider Class="my-2" Style="width:100%" />
-            <MudText Typo="Typo.subtitle2">TOTAL: $15.00</MudText>
-            <MudDivider Class="my-2" Style="width:100%" />
-            @if (Config.ShowQrCode)
-            {
-                <MudIcon Icon="@Icons.Material.Filled.QrCode2" Size="Size.Large" Class="my-2" />
-            }
-            <MudText Typo="Typo.caption" Align="Align.Center">@Config.FooterMessage</MudText>
-        </MudPaper>
+            @* --- RIGHT COLUMN: LIVE PREVIEW --- *@
+            <MudItem xs="12" md="5">
+                <MudText Typo="Typo.subtitle1" Class="mb-2 text-center">Live Preview (@Config.PaperSize)</MudText>
+
+                @* [FIX] Explicit White Background & Text Color *@
+                <MudPaper Class="pa-4 mx-auto d-flex flex-column align-center"
+                          Elevation="4"
+                          Style="@($"width: {(Config.PaperSize == "58mm" ? "240px" : "320px")}; min-height: 450px; background-color: white !important; color: black !important; font-family: 'Courier New', Courier, monospace;")">
+
+                    @* 1. Logo [FIX] Changed styling to scale properly *@
+                    @if (!string.IsNullOrEmpty(Config.LogoBase64))
+                    {
+                        <div style="width: 100%; display: flex; justify-content: center; margin-bottom: 10px;">
+                            <img src="@Config.LogoBase64"
+                                 style="max-width: 100%; max-height: 120px; object-fit: contain;" />
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="d-flex align-center justify-center mb-2" style="width:60px; height:60px; background:#eee; border-radius:50%; color: #333;">
+                            <MudIcon Icon="@Icons.Material.Filled.Store" Size="Size.Large" />
+                        </div>
+                    }
+
+                    <div style="text-align:center; width: 100%;">
+                        <div style="font-weight: bold; font-size: 1.2em; margin-bottom: 4px;">@Config.Header.ToUpper()</div>
+                        <div style="font-size: 0.8em;">123 Main St, Dehradun</div>
+                        <div style="font-size: 0.8em;">+91 98765 43210</div>
+                    </div>
+
+                    <div style="width:100%; border-bottom: 1px dashed black; margin: 10px 0;"></div>
+
+                    <div style="width:100%; font-size: 0.9em;">
+                        <div class="d-flex justify-space-between">
+                            <span>Coffee Latte</span>
+                            <span>120.00</span>
+                        </div>
+                        <div class="d-flex justify-space-between">
+                            <span>Cheese Sandwich</span>
+                            <span>150.00</span>
+                        </div>
+                        <div class="d-flex justify-space-between">
+                            <span>Water Bottle</span>
+                            <span>20.00</span>
+                        </div>
+                    </div>
+
+                    <div style="width:100%; border-bottom: 1px dashed black; margin: 10px 0;"></div>
+
+                    <div style="width:100%; font-weight:bold; font-size: 1.1em;">
+                        <div class="d-flex justify-space-between">
+                            <span>TOTAL</span>
+                            <span>290.00</span>
+                        </div>
+                    </div>
+
+                    <div style="width:100%; border-bottom: 1px solid black; margin: 10px 0;"></div>
+
+                    @if (Config.ShowQrCode)
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.QrCode2" Size="Size.Large" Class="my-2" Style="color: black;" />
+                    }
+                    <div style="text-align:center; font-size: 0.8em; white-space: pre-wrap;">@Config.FooterMessage</div>
+                    <div style="text-align:center; font-size: 0.8em; margin-top: 10px;">*** THANK YOU ***</div>
+
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
     }
 </MudContainer>
 
 @code {
     private bool isLoading = true;
     private string currentTenantId = "";
-
-    // View Model to hold the form data
     private ReceiptConfigModel Config = new();
 
     protected override async Task OnInitializedAsync()
@@ -115,16 +180,13 @@
     {
         isLoading = true;
         using var context = await DbFactory.CreateDbContextAsync();
-
-        // [UPDATED] Use SystemSettings instead of TenantSettings
-        // Note: Make sure "SystemSettings" is in your DbContext
         var settings = await context.SystemSettings
             .Where(s => s.TenantId == currentTenantId && s.Key.StartsWith("Receipt_"))
             .ToListAsync();
 
-        // Map DB rows to Object (Using 'Key' and 'Value')
         Config.Header = GetVal(settings, "Receipt_Header", "My Business");
-        Config.LogoUrl = GetVal(settings, "Receipt_LogoUrl", "");
+        Config.LogoBase64 = GetVal(settings, "Receipt_LogoBase64", "");
+        Config.PaperSize = GetVal(settings, "Receipt_PaperSize", "80mm");
         Config.FooterMessage = GetVal(settings, "Receipt_FooterMessage", "Thank you for your visit!");
         Config.ShowQrCode = bool.Parse(GetVal(settings, "Receipt_ShowQrCode", "true"));
         Config.ShowTaxDetails = bool.Parse(GetVal(settings, "Receipt_ShowTaxDetails", "false"));
@@ -132,9 +194,44 @@
         isLoading = false;
     }
 
+    private async Task UploadLogo(IBrowserFile file)
+    {
+        // 1. Validation
+        if (file.Size > 512000) // 500KB
+        {
+            Snackbar.Add("File too large. Max 500KB.", Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            // 2. Read Stream
+            using var stream = file.OpenReadStream(maxAllowedSize: 512000); // Must match or exceed file size
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+
+            // 3. Convert
+            var base64 = Convert.ToBase64String(ms.ToArray());
+            Config.LogoBase64 = $"data:{file.ContentType};base64,{base64}";
+
+            // 4. Force Refresh
+            StateHasChanged();
+            Snackbar.Add("Logo Uploaded!", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void ClearLogo()
+    {
+        Config.LogoBase64 = "";
+        StateHasChanged();
+    }
+
     private string GetVal(List<SystemSetting> list, string key, string defaultVal)
     {
-        // [UPDATED] Use 'Key' and 'Value' properties
         return list.FirstOrDefault(x => x.Key == key)?.Value ?? defaultVal;
     }
 
@@ -143,40 +240,28 @@
         using var context = await DbFactory.CreateDbContextAsync();
 
         await SaveOrUpdate(context, "Receipt_Header", Config.Header);
-        await SaveOrUpdate(context, "Receipt_LogoUrl", Config.LogoUrl);
+        await SaveOrUpdate(context, "Receipt_LogoBase64", Config.LogoBase64);
+        await SaveOrUpdate(context, "Receipt_PaperSize", Config.PaperSize);
         await SaveOrUpdate(context, "Receipt_FooterMessage", Config.FooterMessage);
         await SaveOrUpdate(context, "Receipt_ShowQrCode", Config.ShowQrCode.ToString());
         await SaveOrUpdate(context, "Receipt_ShowTaxDetails", Config.ShowTaxDetails.ToString());
 
         await context.SaveChangesAsync();
-        Snackbar.Add("Settings Saved!", Severity.Success);
+        Snackbar.Add("Receipt Settings Saved!", Severity.Success);
     }
 
     private async Task SaveOrUpdate(ApplicationDbContext context, string key, string value)
     {
-        var existing = await context.SystemSettings
-            .FirstOrDefaultAsync(s => s.TenantId == currentTenantId && s.Key == key);
-
-        if (existing != null)
-        {
-            existing.Value = value ?? "";
-        }
-        else
-        {
-            context.SystemSettings.Add(new SystemSetting
-            {
-                Id = Guid.NewGuid().ToString(), // Assuming BaseEntity doesn't auto-gen in memory
-                TenantId = currentTenantId,
-                Key = key,
-                Value = value ?? ""
-            });
-        }
+        var existing = await context.SystemSettings.FirstOrDefaultAsync(s => s.TenantId == currentTenantId && s.Key == key);
+        if (existing != null) existing.Value = value ?? "";
+        else context.SystemSettings.Add(new SystemSetting { Id = Guid.NewGuid().ToString(), TenantId = currentTenantId, Key = key, Value = value ?? "" });
     }
 
     public class ReceiptConfigModel
     {
         public string Header { get; set; } = "";
-        public string LogoUrl { get; set; } = "";
+        public string LogoBase64 { get; set; } = "";
+        public string PaperSize { get; set; } = "80mm";
         public string FooterMessage { get; set; } = "";
         public bool ShowQrCode { get; set; } = true;
         public bool ShowTaxDetails { get; set; } = false;

@@ -1,0 +1,169 @@
+﻿@page "/admin/settings/payments"
+@using PosSystem.Data.Entities
+@using Microsoft.EntityFrameworkCore
+@using PosSystem.Data
+@using PosSystem.Services
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Permissions
+
+@attribute [Authorize(Policy = AppPermissions.Settings.Payments)]
+
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject ITenantService TenantService
+@inject ISnackbar Snackbar
+
+@layout PosSystem.Components.Layout.MainLayout
+
+<PageTitle>Payment Gateway Configuration</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
+    <MudText Typo="Typo.h5" Class="mb-4">Payment Configuration</MudText>
+    <MudText Typo="Typo.body2" Class="mb-6 text-muted">
+        Configure your Razorpay API keys to accept online payments and UPI.
+    </MudText>
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        <MudPaper Class="pa-4">
+            <MudForm>
+                <MudGrid>
+                    <MudItem xs="12">
+                        <MudAlert Severity="Severity.Info" Class="mb-2">
+                            You can find these keys in your Razorpay Dashboard under <b>Settings > API Keys</b>.
+                        </MudAlert>
+                    </MudItem>
+
+                    @* 1. Enable/Disable *@
+                    <MudItem xs="12">
+                        <MudSwitch @bind-Value="Config.IsEnabled" Color="Color.Success" Label="Enable Online Payments (Razorpay)" />
+                    </MudItem>
+
+                    @* 2. Key ID *@
+                    <MudItem xs="12">
+                        <MudTextField @bind-Value="Config.KeyId"
+                                      Label="Razorpay Key ID"
+                                      Variant="Variant.Outlined"
+                                      HelperText="Starts with rzp_test_ or rzp_live_"
+                                      Disabled="@(!Config.IsEnabled)" />
+                    </MudItem>
+
+                    @* 3. Key Secret (Masked) *@
+                    <MudItem xs="12">
+                        <MudTextField @bind-Value="Config.KeySecret"
+                                      Label="Razorpay Key Secret"
+                                      Variant="Variant.Outlined"
+                                      InputType="@passwordInput"
+                                      Adornment="Adornment.End"
+                                      AdornmentIcon="@passwordIcon"
+                                      OnAdornmentClick="TogglePasswordVisibility"
+                                      HelperText="Keep this secret safe!"
+                                      Disabled="@(!Config.IsEnabled)" />
+                    </MudItem>
+
+                    @* 4. Test Mode *@
+                    <MudItem xs="12">
+                        <MudCheckBox @bind-Value="Config.IsTestMode"
+                                     Label="Enable Test Mode (Sandbox)"
+                                     Color="Color.Warning"
+                                     Disabled="@(!Config.IsEnabled)" />
+                        <MudText Typo="Typo.caption" Class="d-block ml-8">
+                            When checked, no real money will be deducted. Use for testing.
+                        </MudText>
+                    </MudItem>
+
+                    <MudItem xs="12" Class="d-flex justify-end mt-4">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveSettings">
+                            Save Security Keys
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+            </MudForm>
+        </MudPaper>
+    }
+</MudContainer>
+
+@code {
+    private bool isLoading = true;
+    private string currentTenantId = "";
+    private PaymentConfigModel Config = new();
+
+    // Password Visibility Logic
+    private bool showPassword = false;
+    private InputType passwordInput = InputType.Password;
+    private string passwordIcon = Icons.Material.Filled.VisibilityOff;
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentTenantId = TenantService.GetTenantId();
+        await LoadSettings();
+    }
+
+    private void TogglePasswordVisibility()
+    {
+        if (showPassword)
+        {
+            showPassword = false;
+            passwordIcon = Icons.Material.Filled.VisibilityOff;
+            passwordInput = InputType.Password;
+        }
+        else
+        {
+            showPassword = true;
+            passwordIcon = Icons.Material.Filled.Visibility;
+            passwordInput = InputType.Text;
+        }
+    }
+
+    private async Task LoadSettings()
+    {
+        isLoading = true;
+        using var context = await DbFactory.CreateDbContextAsync();
+        var settings = await context.SystemSettings
+            .Where(s => s.TenantId == currentTenantId && s.Key.StartsWith("Payment_"))
+            .ToListAsync();
+
+        Config.IsEnabled = bool.Parse(GetVal(settings, "Payment_RazorpayEnabled", "false"));
+        Config.KeyId = GetVal(settings, "Payment_RazorpayKeyId", "");
+        Config.KeySecret = GetVal(settings, "Payment_RazorpayKeySecret", "");
+        Config.IsTestMode = bool.Parse(GetVal(settings, "Payment_RazorpayTestMode", "true"));
+
+        isLoading = false;
+    }
+
+    private string GetVal(List<SystemSetting> list, string key, string defaultVal)
+    {
+        return list.FirstOrDefault(x => x.Key == key)?.Value ?? defaultVal;
+    }
+
+    private async Task SaveSettings()
+    {
+        using var context = await DbFactory.CreateDbContextAsync();
+
+        await SaveOrUpdate(context, "Payment_RazorpayEnabled", Config.IsEnabled.ToString());
+        await SaveOrUpdate(context, "Payment_RazorpayKeyId", Config.KeyId);
+        await SaveOrUpdate(context, "Payment_RazorpayKeySecret", Config.KeySecret); // In production, encrypt this!
+        await SaveOrUpdate(context, "Payment_RazorpayTestMode", Config.IsTestMode.ToString());
+
+        await context.SaveChangesAsync();
+        Snackbar.Add("Payment Keys Saved Successfully!", Severity.Success);
+    }
+
+    private async Task SaveOrUpdate(ApplicationDbContext context, string key, string value)
+    {
+        var existing = await context.SystemSettings.FirstOrDefaultAsync(s => s.TenantId == currentTenantId && s.Key == key);
+        if (existing != null) existing.Value = value ?? "";
+        else context.SystemSettings.Add(new SystemSetting { Id = Guid.NewGuid().ToString(), TenantId = currentTenantId, Key = key, Value = value ?? "" });
+    }
+
+    public class PaymentConfigModel
+    {
+        public bool IsEnabled { get; set; } = false;
+        public string KeyId { get; set; } = "";
+        public string KeySecret { get; set; } = "";
+        public bool IsTestMode { get; set; } = true;
+    }
+}

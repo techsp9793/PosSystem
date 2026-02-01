@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PosSystem.Data;
 
@@ -11,9 +12,11 @@ using PosSystem.Data;
 namespace PosSystem.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260131151234_AddSyncFieldsToOrder")]
+    partial class AddSyncFieldsToOrder
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -279,7 +282,7 @@ namespace PosSystem.Migrations
                         new
                         {
                             Id = "cat-retail-01",
-                            CreatedAt = new DateTime(2026, 1, 31, 18, 52, 32, 588, DateTimeKind.Utc).AddTicks(5006),
+                            CreatedAt = new DateTime(2026, 1, 31, 15, 12, 34, 323, DateTimeKind.Utc).AddTicks(4064),
                             DefaultCategoryTerm = "Category",
                             DefaultProductTerm = "Product",
                             Description = "Shops, Boutiques, General Stores",
@@ -289,7 +292,7 @@ namespace PosSystem.Migrations
                         new
                         {
                             Id = "cat-park-01",
-                            CreatedAt = new DateTime(2026, 1, 31, 18, 52, 32, 588, DateTimeKind.Utc).AddTicks(5016),
+                            CreatedAt = new DateTime(2026, 1, 31, 15, 12, 34, 323, DateTimeKind.Utc).AddTicks(4073),
                             DefaultCategoryTerm = "Zone",
                             DefaultProductTerm = "Ticket",
                             Description = "Theme Parks, Zoos, Water Parks",
@@ -299,7 +302,7 @@ namespace PosSystem.Migrations
                         new
                         {
                             Id = "cat-food-01",
-                            CreatedAt = new DateTime(2026, 1, 31, 18, 52, 32, 588, DateTimeKind.Utc).AddTicks(5022),
+                            CreatedAt = new DateTime(2026, 1, 31, 15, 12, 34, 323, DateTimeKind.Utc).AddTicks(4079),
                             DefaultCategoryTerm = "Menu Section",
                             DefaultProductTerm = "Dish",
                             Description = "Food Service, QSR, Fine Dining",
@@ -379,9 +382,6 @@ namespace PosSystem.Migrations
 
                     b.Property<string>("PaymentMethod")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("PaymentReferenceId")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Status")
@@ -958,7 +958,7 @@ namespace PosSystem.Migrations
                         new
                         {
                             Id = "type-sales-01",
-                            CreatedAt = new DateTime(2026, 1, 31, 18, 52, 32, 588, DateTimeKind.Utc).AddTicks(5143),
+                            CreatedAt = new DateTime(2026, 1, 31, 15, 12, 34, 323, DateTimeKind.Utc).AddTicks(4254),
                             IsDeleted = false,
                             IsSalesPoint = true,
                             IsStockPoint = true,
@@ -967,7 +967,7 @@ namespace PosSystem.Migrations
                         new
                         {
                             Id = "type-warehouse-01",
-                            CreatedAt = new DateTime(2026, 1, 31, 18, 52, 32, 588, DateTimeKind.Utc).AddTicks(5156),
+                            CreatedAt = new DateTime(2026, 1, 31, 15, 12, 34, 323, DateTimeKind.Utc).AddTicks(4262),
                             IsDeleted = false,
                             IsSalesPoint = false,
                             IsStockPoint = true,
@@ -976,7 +976,7 @@ namespace PosSystem.Migrations
                         new
                         {
                             Id = "type-kitchen-01",
-                            CreatedAt = new DateTime(2026, 1, 31, 18, 52, 32, 588, DateTimeKind.Utc).AddTicks(5162),
+                            CreatedAt = new DateTime(2026, 1, 31, 15, 12, 34, 323, DateTimeKind.Utc).AddTicks(4268),
                             IsDeleted = false,
                             IsSalesPoint = false,
                             IsStockPoint = false,

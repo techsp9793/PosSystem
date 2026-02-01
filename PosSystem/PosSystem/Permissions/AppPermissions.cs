@@ -127,6 +127,13 @@ namespace PosSystem.Permissions
             public const string View = "Permissions.Inventory.View";
             public const string Edit = "Permissions.Inventory.Edit"; // Adjustment
         }
+        public static class Settings
+        {
+            public const string General = "Permissions.Settings.General"; // Store Name, etc.
+            public const string Receipts = "Permissions.Settings.Receipts"; // <--- FOR YOUR RECEIPT PAGE
+            public const string Payments = "Permissions.Settings.Payments"; // Razorpay Keys (Sensitive!)
+        }
+
         // --- AUTO-DISCOVERY HELPER ---
         public static List<string> GetAllPermissions()
         {

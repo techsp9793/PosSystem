@@ -27,7 +27,7 @@
 <MudSnackbarProvider />
 
 <MudLayout>
-    <MudAppBar Elevation="1" Dense="true" Fixed="true" Color="Color.Surface">
+    <MudAppBar Elevation="1" Dense="true" Fixed="true" Color="Color.Primary">
         <MudIconButton Icon="@Icons.Material.Filled.Menu"
                        Color="Color.Inherit"
                        Edge="Edge.Start"
@@ -39,7 +39,34 @@
         <MudSpacer />
 
         @* --- [NEW] LOCATION SELECTOR --- *@
-        <div style="min-width: 200px; max-width: 300px;" class="mr-4">
+        <MudMenu AnchorOrigin="Origin.BottomCenter" TransformOrigin="Origin.TopCenter" Class="mr-4">
+            <ActivatorContent>
+                <MudButton Variant="Variant.Text"
+                           Color="Color.Inherit"
+                           StartIcon="@Icons.Material.Filled.Place"
+                           EndIcon="@Icons.Material.Filled.ArrowDropDown"
+                           Style="min-width: 150px; text-transform:none;">
+                    @* Shows current name or loading text *@
+                    @(PosState.CurrentUnit?.Name ?? "Select Location")
+                </MudButton>
+            </ActivatorContent>
+            <ChildContent>
+                @if (AvailableUnits != null && AvailableUnits.Any())
+                {
+                    @foreach (var unit in AvailableUnits)
+                    {
+                        <MudMenuItem OnClick="@(() => OnUnitChanged(unit.Id))">
+                            @unit.Name
+                        </MudMenuItem>
+                    }
+                }
+                else
+                {
+                    <MudMenuItem Disabled="true">Loading...</MudMenuItem>
+                }
+            </ChildContent>
+        </MudMenu>
+       @*  <div style="min-width: 200px; max-width: 300px;" class="mr-4">
             <MudSelect T="string" Label="Current Location" Variant="Variant.Outlined" Margin="Margin.Dense"
                        Value="@PosState.CurrentUnit?.Id"
                        ValueChanged="OnUnitChanged"
@@ -54,7 +81,7 @@
                     }
                 }
             </MudSelect>
-        </div>
+        </div> *@
         @* -------------------------------- *@
 
         <AuthorizeView Policy="Permissions.Pos.Access">
@@ -172,10 +199,10 @@
             AvailableUnits = (await UnitOfWork.Units.GetAllAsync()).ToList();
 
             // If none selected, default to the first one
-            if (!PosState.IsUnitSelected && AvailableUnits.Any())
-            {
-                PosState.SetUnit(AvailableUnits.First());
-            }
+            // if (!PosState.IsUnitSelected && AvailableUnits.Any())
+            // {
+            //     PosState.SetUnit(AvailableUnits.First());
+            // }
         }
         catch (Exception ex)
         {
