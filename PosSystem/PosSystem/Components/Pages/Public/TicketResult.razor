@@ -1,0 +1,225 @@
+﻿@page "/ticket-result/{GroupId}"
+@layout PosSystem.Components.Layout.SelfHelpLayout
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Data
+@using PosSystem.Services
+@using PosSystem.Data.Entities
+@using Microsoft.EntityFrameworkCore
+@attribute [AllowAnonymous]
+
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject QrCoreService QrService
+@inject IJSRuntime JS
+
+<PageTitle>Receipt</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Small" Class="d-flex justify-center pa-4" Style="min-height: 90vh;">
+
+    @* --- RECEIPT PAPER (Responsive Width) --- *@
+    <MudPaper Elevation="4" Class="pa-4 pa-sm-6 receipt-container d-flex flex-column"
+              Style="width: 100%; max-width: 400px; background-color: #fff; height: fit-content;">
+
+        @* --- HEADER --- *@
+        <div class="text-center mb-4">
+            <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Large" Class="mb-2" />
+            <MudText Typo="Typo.h5" Style="font-weight:900; font-family: monospace; letter-spacing: -0.5px;">PAYMENT SUCCESS</MudText>
+            <MudText Typo="Typo.caption" Style="font-family: monospace; font-size: 1.1em;">Order: @GroupId.Substring(0, 8).ToUpper()</MudText>
+            <MudText Typo="Typo.caption" Class="d-block text-muted" Style="font-family: monospace;">@DateTime.Now.ToString("dd MMM yyyy HH:mm")</MudText>
+        </div>
+
+        <div class="dashed-line my-3"></div>
+
+        @* --- QR CODE SECTION --- *@
+        <div class="d-flex flex-column align-center my-2 relative">
+            @if (!string.IsNullOrEmpty(GroupQrImage))
+            {
+                <div class="qr-wrapper">
+                    <img src="@GroupQrImage" class="qr-image" style="opacity: @(AllUsed ? "0.3" : "1")" />
+                    @if (AllUsed)
+                    {
+                        <div class="used-stamp">USED</div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="d-flex justify-center align-center" style="height: 200px; width: 200px;">
+                    <MudProgressCircular Indeterminate="true" Color="Color.Default" />
+                </div>
+            }
+            <MudText Typo="Typo.caption" Align="Align.Center" Class="mt-2" Style="font-family: monospace; font-weight:bold;">SCAN AT GATE</MudText>
+        </div>
+
+        <div class="dashed-line my-3"></div>
+
+        @* --- ITEM DETAILS --- *@
+        <div class="mb-2 flex-grow-1">
+            @if (TicketSummary != null)
+            {
+                @foreach (var line in TicketSummary)
+                {
+                    <div class="d-flex justify-space-between align-end mb-1" style="font-family: monospace; font-size: 14px;">
+                        <span style="max-width: 70%;">@line.Key</span>
+                        <span style="font-weight:bold;">x @line.Value</span>
+                    </div>
+                }
+            }
+        </div>
+
+        <div class="dashed-line my-3"></div>
+
+        @* --- TOTAL --- *@
+        <div class="d-flex justify-space-between" style="font-family: monospace; font-size: 18px; font-weight:900;">
+            <span>TOTAL QTY</span>
+            <span>@TotalTickets</span>
+        </div>
+        <div class="mt-2 pa-2 border rounded border-warning">
+            <MudText Typo="Typo.caption" Color="Color.Warning">DEBUG ONLY:</MudText>
+            <br />
+            @* We reconstruct the link here to show it *@
+            <a href="/verify?data=@System.Net.WebUtility.UrlEncode(QrService.CreateSecureUrl("Group", GroupId))" target="_blank">
+                Click here to simulate Phone Scan
+            </a>
+        </div>
+        @* --- FOOTER ACTIONS --- *@
+        <div class="mt-8 d-print-none text-center">
+            <MudButton Variant="Variant.Outlined" Color="Color.Dark" FullWidth="true" StartIcon="@Icons.Material.Filled.Print" OnClick="PrintPage" Class="border-2">
+                Save / Print
+            </MudButton>
+
+            <MudButton Variant="Variant.Text" Color="Color.Primary" FullWidth="true" OnClick="@(() => Navigation.NavigateTo("/self-help"))" Class="mt-2">
+                Buy More
+            </MudButton>
+        </div>
+    </MudPaper>
+</MudContainer>
+
+<style>
+    .receipt-container {
+        border: 1px solid #e0e0e0;
+        /* Zig-zag edge effect optional, simple border for now */
+    }
+
+    .dashed-line {
+        border-top: 2px dashed #000;
+        opacity: 0.2;
+        width: 100%;
+    }
+
+    /* Responsive QR Wrapper */
+    .qr-wrapper {
+        position: relative;
+        width: 200px;
+        height: 200px;
+        max-width: 100%; /* Prevents overflow */
+    }
+
+    .qr-image {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+    }
+
+    .used-stamp {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) rotate(-15deg);
+        border: 4px solid #d32f2f;
+        color: #d32f2f;
+        font-size: 2rem;
+        font-weight: 900;
+        padding: 5px 20px;
+        border-radius: 8px;
+        opacity: 0.9;
+        background-color: rgba(255, 255, 255, 0.8);
+        white-space: nowrap;
+    }
+
+    /* Print Optimization */
+    @@media print {
+        .d-print-none {
+            display: none !important;
+        }
+
+        .mud-appbar {
+            display: none !important;
+        }
+
+        body, .mud-main-content {
+            background-color: #fff !important;
+            padding: 0 !important;
+            margin: 0 !important;
+        }
+
+        .receipt-container {
+            border: none !important;
+            box-shadow: none !important;
+            max-width: 100% !important;
+            width: 100% !important;
+        }
+    }
+</style>
+
+@inject NavigationManager Navigation
+
+@code {
+    [Parameter] public string GroupId { get; set; } = "";
+
+    private string GroupQrImage = "";
+    private Dictionary<string, int> TicketSummary = new();
+    private int TotalTickets = 0;
+    private bool AllUsed = false;
+    private System.Threading.Timer? _refreshTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+        // Generate ONE QR for the Group
+        // Payload format: "Group|{OrderId}"
+        GroupQrImage = QrService.GenerateQrImage(QrService.CreateSecureUrl("Group", GroupId));
+
+        // Poll for updates
+        _refreshTimer = new System.Threading.Timer(async _ => await CheckStatus(), null, 3000, 3000);
+    }
+
+    private async Task LoadData()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var tickets = await db.FacilityTickets
+            .IgnoreQueryFilters()
+            .Include(t => t.Product)
+            .Where(t => t.OrderId == GroupId)
+            .ToListAsync();
+
+        if (tickets.Any())
+        {
+            TicketSummary = tickets
+                .GroupBy(t => t.Product?.Name ?? "Unknown")
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            TotalTickets = tickets.Count;
+            AllUsed = tickets.All(t => t.IsUsed);
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task CheckStatus()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        // Check if all tickets in this group are marked used
+        var anyUnused = await db.FacilityTickets
+            .IgnoreQueryFilters()
+            .AnyAsync(t => t.OrderId == GroupId && !t.IsUsed);
+
+        bool newStatus = !anyUnused;
+        if (newStatus != AllUsed)
+        {
+            AllUsed = newStatus;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task PrintPage() => await JS.InvokeVoidAsync("print");
+    public void Dispose() => _refreshTimer?.Dispose();
+}

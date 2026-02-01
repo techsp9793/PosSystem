@@ -52,7 +52,8 @@ namespace PosSystem
 
             // [NEW] Register Payment Service (Missing in your undo)
             builder.Services.AddScoped<IPaymentService, PaymentService>();
-
+            // Add this line with your other service registrations
+            builder.Services.AddScoped<QrCoreService>();
             builder.Services.AddAuthentication(options =>
             {
                 options.DefaultScheme = IdentityConstants.ApplicationScheme;

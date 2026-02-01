@@ -1,0 +1,22 @@
+﻿@inherits LayoutComponentBase
+@using MudBlazor
+@using PosSystem.Client.Services
+@using PosSystem.Client.Themes
+@inject ThemeService ThemeService
+
+<MudThemeProvider Theme="@AppTheme.Default" IsDarkMode="@ThemeService.IsDarkMode" />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1" Color="Color.Primary" Dense="true" Fixed="true">
+        <MudIcon Icon="@Icons.Material.Filled.TouchApp" Class="mr-3" />
+        <MudText Typo="Typo.h6"><b>SELF SERVICE KIOSK</b></MudText>
+        <MudSpacer />
+        @* Optional: Hidden toggle for dark mode if needed *@
+    </MudAppBar>
+
+    <MudMainContent Class="mud-theme-background" Style="height: 100vh; padding-top: 64px; overflow-y: hidden;">
+        @Body
+    </MudMainContent>
+</MudLayout>

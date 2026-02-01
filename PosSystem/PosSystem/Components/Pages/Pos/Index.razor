@@ -61,12 +61,29 @@
         }
     </MudContainer>
 }
+else if (!PosState.IsSessionValid)
+{
+    @* --- [NEW] STATE C: SESSION TAKEN OVER BY ANOTHER DEVICE --- *@
+    <MudContainer MaxWidth="MaxWidth.Small" Class="mt-16 text-center">
+        <MudPaper Elevation="4" Class="pa-8 rounded-lg">
+            <MudIcon Icon="@Icons.Material.Filled.DesktopAccessDisabled" Size="Size.Large" Color="Color.Error" Class="mb-4" />
+            <MudText Typo="Typo.h5" Color="Color.Error" Class="mb-2"><b>SESSION INACTIVE</b></MudText>
+            <MudDivider Class="my-4" />
+            <MudText Typo="Typo.body1">This account is currently active on another device or browser tab.</MudText>
+            <MudText Typo="Typo.body2" Class="mt-2 text-muted">To protect your inventory and sales data, only one POS session can be active at a time.</MudText>
+            
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-8 py-3 px-8" 
+                       OnClick="@(() => Navigation.NavigateTo("/pos", true))">
+                RE-AUTHENTICATE THIS DEVICE
+            </MudButton>
+        </MudPaper>
+    </MudContainer>
+}
 else
 {
     @* --- STATE B: PROFESSIONAL SALES INTERFACE --- *@
     <MudGrid Class="h-100 pa-0 ma-0" Spacing="0">
 
-        @* 1. LEFT PANE: CATEGORIES *@
         @* 1. LEFT PANE: CATEGORIES & STATS *@
         <MudItem xs="2" Class="d-flex flex-column border-end mud-theme-surface" Style="height: calc(100vh - 50px); overflow: hidden;">
 
@@ -304,48 +321,13 @@ else
     </MudGrid>
 
     @* Payment Dialog *@
-    // <MudDialog @bind-Visible="isPaymentDialogVisible" Options="dialogOptions">
-    //     <DialogContent>
-    //         <MudText Typo="Typo.h5" Class="mb-4 text-center">Amount Due: <b>@CurrencySymbol@CartTotal.ToString("N2")</b></MudText>
-
-    //         @if (isProcessingPayment)
-    //         {
-    //             <div class="d-flex flex-column align-center py-4">
-    //                 <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
-    //                 <MudText Class="mt-2">Waiting for payment...</MudText>
-    //             </div>
-    //         }
-    //         else
-    //         {
-    //             <MudGrid>
-    //                 <MudItem xs="6">
-    //                     <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-6 d-flex flex-column gap-2" OnClick="@(() => ProcessPayment("Cash"))">
-    //                         <MudIcon Icon="@Icons.Material.Filled.Money" Size="Size.Large" Color="Color.Success" />
-    //                         <MudText>CASH</MudText>
-    //                     </MudButton>
-    //                 </MudItem>
-    //                 <MudItem xs="6">
-    //                     @* [UPDATED] Calls Razorpay Logic *@
-    //                     <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-6 d-flex flex-column gap-2" OnClick="InitiateRazorpayPayment">
-    //                         <MudIcon Icon="@Icons.Material.Filled.QrCode2" Size="Size.Large" Color="Color.Primary" />
-    //                         <MudText>UPI / QR</MudText>
-    //                     </MudButton>
-    //                 </MudItem>
-    //             </MudGrid>
-    //         }
-    //     </DialogContent>
-    //     <DialogActions>
-    //         <MudButton OnClick="() => isPaymentDialogVisible = false" Disabled="@isProcessingPayment">Cancel</MudButton>
-    //     </DialogActions>
-    // </MudDialog>
-    @* Payment Dialog *@
     <MudDialog @bind-Visible="isPaymentDialogVisible" Options="dialogOptions">
         <DialogContent>
             <MudText Typo="Typo.h5" Class="mb-4 text-center">Due: <b>@CurrencySymbol@CartTotal.ToString("N2")</b></MudText>
 
             @if (isListeningForWebhook)
             {
-                @* --- NEW STATE: LISTENING FOR WEBHOOK --- *@
+                @* --- STATE: LISTENING FOR WEBHOOK --- *@
                 <MudPaper Class="pa-4 border-2 mud-border-primary border-dashed d-flex flex-column align-center gap-3">
                     <MudProgressCircular Indeterminate="true" Size="Size.Medium" Color="Color.Primary" />
                     <MudText Typo="Typo.h6" Color="Color.Primary">Listening for Payment...</MudText>
@@ -379,7 +361,7 @@ else
                         </MudButton>
                     </MudItem>
 
-                    @* --- NEW BUTTON: VERIFY QR --- *@
+                    @* --- BUTTON: VERIFY QR --- *@
                     <MudItem xs="4">
                         <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-6 d-flex flex-column gap-2" OnClick="StartWebhookListener">
                             <MudIcon Icon="@Icons.Material.Filled.QrCodeScanner" Size="Size.Large" Color="Color.Primary" />
@@ -393,6 +375,7 @@ else
             <MudButton OnClick="CancelPaymentDialog" Disabled="@isProcessingPayment">Cancel</MudButton>
         </DialogActions>
     </MudDialog>
+    
     @* Customer Dialog *@
     <MudDialog @bind-Visible="isCustomerDialogVisible">
         <DialogContent>
@@ -433,18 +416,9 @@ else
     }
 
     @@keyframes fadeout {
-        0% {
-            opacity: 1;
-        }
-
-        70% {
-            opacity: 1;
-        }
-
-        100% {
-            opacity: 0;
-            display: none;
-        }
+        0% { opacity: 1; }
+        70% { opacity: 1; }
+        100% { opacity: 0; display: none; }
     }
 </style>
 
@@ -473,7 +447,7 @@ else
     private string tempCustPhone = "";
     private bool isCustomerDialogVisible = false;
     private bool isPaymentDialogVisible = false;
-    private bool isProcessingPayment = false; // [NEW] Loading State for Razorpay
+    private bool isProcessingPayment = false;
 
     private Dictionary<string, int> ProductStock = new();
     private DialogOptions dialogOptions = new() { MaxWidth = MaxWidth.Small, FullWidth = true };
@@ -481,34 +455,49 @@ else
 
     private System.Threading.Timer? _syncTimer;
 
-    // [NEW] To handle JS callbacks
     private DotNetObjectReference<Index> objRef;
     private HubConnection? hubConnection;
     private bool isListeningForWebhook = false;
     private decimal DailyOpeningBalance = 0;
     private decimal DailyTotalSales = 0;
     private decimal DailyCashSales = 0;
+    private bool canCreateProduct = false;
+    private bool canCreateCategory = false;
     protected override async Task OnInitializedAsync()
     {
-        objRef = DotNetObjectReference.Create(this); // Init reference
+        objRef = DotNetObjectReference.Create(this);
 
         using var scope = ScopeFactory.CreateScope();
         var safeUow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         AvailableUnits = (await safeUow.Units.GetAllAsync()).ToList();
 
         CurrencySymbol = Terminology.GetText("CurrencySymbol", "$");
-        PosState.OnChange += StateHasChanged;
-
+        // PosState.OnChange += StateHasChanged;
+        PosState.OnChange += () => InvokeAsync(StateHasChanged);
         await CheckForAutoLogin();
 
-        // Sync Poller (5s)
+        // [POLLER] Every 5 seconds: Sync status + Session Concurrency Check
         _syncTimer = new System.Threading.Timer(async _ =>
         {
+            // 1. Update Sync Count
             await UpdateSyncStatus();
+            if (PosState.IsUnitSelected)
+            {
+                // 2. [NEW] Check if another session took over
+                var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+                var user = await UserManager.GetUserAsync(authState.User);
+                if (user != null)
+                {
+                    // await PosState.ValidateSessionAsync(user.Id, LocalDbFactory);
+                    await PosState.ValidateSessionAsync(user.Id, LocalDbFactory, takeControl: false);
+                }
+            }
             await InvokeAsync(StateHasChanged);
-        }, null, 0, 5000);
+        }, null, 3000, 5000);
+
         await LoadDailyStats();
         isLoading = false;
+
         try
         {
             hubConnection = new HubConnectionBuilder()
@@ -516,10 +505,8 @@ else
                 .WithAutomaticReconnect()
                 .Build();
 
-            // Register the listener: Backend calls "PaymentVerified"
             hubConnection.On<decimal, string, string>("PaymentVerified", async (amount, paymentId, payerContact) =>
             {
-                // Only process if we are currently listening AND amount matches
                 if (isListeningForWebhook && isPaymentDialogVisible)
                 {
                     if (amount == CartTotal)
@@ -548,7 +535,6 @@ else
             using var localDb = await LocalDbFactory.CreateDbContextAsync();
             int currentCount = await localDb.Orders.CountAsync(o => !o.IsSynced);
 
-            // Logic to show "Sync Complete" message
             if (currentCount == 0 && _lastSyncCount > 0)
             {
                 ShowSyncComplete = true;
@@ -564,26 +550,30 @@ else
         catch { }
     }
 
-    // --- NAVIGATION LOCK ---
     private void OnBeforeInternalNavigation(LocationChangingContext context)
     {
-        if (ParkedOrders.Any())
-        {
-            // Just prompt using standard browser confirm (via NavigationLock ConfirmExternalNavigation)
-        }
+        if (ParkedOrders.Any()) { }
     }
-
     private async Task CheckForAutoLogin()
     {
+        // Get user info first (needed for session validation)
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = await UserManager.GetUserAsync(authState.User);
+
         if (PosState.IsUnitSelected && PosState.CurrentUnit != null)
         {
+            // Unit was already selected in MainLayout - validate session immediately
+            if (user != null)
+            {
+                await PosState.ValidateSessionAsync(user.Id, LocalDbFactory, takeControl: true);
+            }
             await LoadPosData(PosState.CurrentUnit);
             return;
         }
+
+        // No unit selected - try to auto-select from user's default
         try
         {
-            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-            var user = await UserManager.GetUserAsync(authState.User);
             if (user != null && !string.IsNullOrEmpty(user.DefaultUnitId))
             {
                 var assignedUnit = AvailableUnits.FirstOrDefault(u => u.Id == user.DefaultUnitId);
@@ -593,12 +583,58 @@ else
         catch (Exception ex) { Console.WriteLine("Auto-login error: " + ex.Message); }
     }
 
+   
     private async Task SelectUnit(Unit unit)
     {
-        try { isLoading = true; PosState.SetUnit(unit); await LoadPosData(unit); }
-        catch (Exception ex) { Snackbar.Add("Error loading unit.", Severity.Error); }
-        finally { isLoading = false; }
+        try
+        {
+            isLoading = true;
+
+            // 1. Set the unit locally (This enables the UI)
+            PosState.SetUnit(unit);
+
+            // 2. [CRITICAL FIX] Claim the session IMMEDIATELY (Before loading data)
+            // We do this FIRST so the background timer sees the correct ID instantly.
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var user = await UserManager.GetUserAsync(authState.User);
+            if (user != null)
+            {
+                // Pass 'true' to OVERWRITE the DB (Last Login Wins)
+                await PosState.ValidateSessionAsync(user.Id, LocalDbFactory, takeControl: true);
+            }
+
+            // 3. NOW load the heavy data (Products, Categories, etc.)
+            await LoadPosData(unit);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Error loading unit.", Severity.Error);
+            PosState.ClearUnit();
+        }
+        finally
+        {
+            isLoading = false;
+        }
     }
+    // private async Task SelectUnit(Unit unit)
+    // {
+    //     try 
+    //     { 
+    //         isLoading = true; 
+    //         PosState.SetUnit(unit); 
+    //         await LoadPosData(unit); 
+            
+    //         // [NEW] Immediately register session as active for this user
+    //         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+    //         var user = await UserManager.GetUserAsync(authState.User);
+    //         if (user != null)
+    //         {
+    //             await PosState.ValidateSessionAsync(user.Id, LocalDbFactory);
+    //         }
+    //     }
+    //     catch (Exception ex) { Snackbar.Add("Error loading unit.", Severity.Error); }
+    //     finally { isLoading = false; }
+    // }
 
     private async Task LoadPosData(Unit unit)
     {
@@ -645,11 +681,9 @@ else
     private void SaveCustomer() { CurrentCustomerName = tempCustName; CurrentCustomerPhone = tempCustPhone; isCustomerDialogVisible = false; }
     private void OpenPaymentDialog() => isPaymentDialogVisible = true;
 
-    // --- DRAFTS LOGIC ---
     private void ParkOrder()
     {
         if (!CartItems.Any()) return;
-
         var draftItems = CartItems.Select(c => new OrderItem
         {
             ProductId = c.ProductId,
@@ -657,7 +691,6 @@ else
             UnitPrice = c.UnitPrice,
             Quantity = c.Quantity
         }).ToList();
-
         var draft = new Order
         {
             OrderNumber = $"DRAFT-{DateTime.Now:HHmm}",
@@ -666,7 +699,6 @@ else
             Status = "Draft",
             OrderItems = draftItems
         };
-
         ParkedOrders.Add(draft);
         ClearCart();
         Snackbar.Add("Bill Held (Draft Saved)", Severity.Info);
@@ -679,7 +711,6 @@ else
             Snackbar.Add("Please clear current cart before restoring a draft.", Severity.Warning);
             return;
         }
-
         CurrentCustomerName = draft.CustomerName;
         foreach (var item in draft.OrderItems)
         {
@@ -691,57 +722,42 @@ else
                 Quantity = item.Quantity
             });
         }
-
         ParkedOrders.Remove(draft);
         Snackbar.Add("Draft Restored", Severity.Success);
     }
 
-    private void OpenDraftsDialog()
-    {
-        Snackbar.Add("Feature: Show all drafts dialog", Severity.Info);
-    }
+    private void OpenDraftsDialog() => Snackbar.Add("Feature: Show all drafts dialog", Severity.Info);
 
     private void OpenRecentOrders()
     {
-        // 1. Safety Check: Ensure a unit is actually selected
         if (PosState.CurrentUnit == null)
         {
             Snackbar.Add("System State Lost. Please refresh the page.", Severity.Warning);
             return;
         }
-
-        // 2. Pass the ID securely
         var parameters = new DialogParameters { ["UnitId"] = PosState.CurrentUnit.Id };
-
-        // 3. Show Dialog
         DialogService.Show<RecentOrdersDialog>("Recent Orders", parameters, new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
     }
-    // [NEW] Start Listening UI
+
     private void StartWebhookListener()
     {
         isListeningForWebhook = true;
         StateHasChanged();
     }
 
-    // [NEW] Reset UI State
     private void CancelPaymentDialog()
     {
         isListeningForWebhook = false;
         isPaymentDialogVisible = false;
         isProcessingPayment = false;
     }
-    // --- DAILY STATS LOGIC ---
 
     private async Task LoadDailyStats()
     {
         try
         {
             using var localDb = await LocalDbFactory.CreateDbContextAsync();
-
-            // [FIX] Use UTC to match database CreatedAt
             var todayUtc = DateTime.UtcNow.Date;
-
-            // A. Calculate Sales (Using UTC)
             var todayOrders = await localDb.Orders
                 .Where(o => o.CreatedAt >= todayUtc && o.Status != "Draft" && o.Status != "Void")
                 .Select(o => new { o.TotalAmount, o.PaymentMethod })
@@ -750,11 +766,10 @@ else
             DailyTotalSales = todayOrders.Sum(o => o.TotalAmount);
             DailyCashSales = todayOrders.Where(o => o.PaymentMethod == "Cash").Sum(o => o.TotalAmount);
 
-            // B. Get Opening Balance
-            // Key format: "OpeningBalance_2023-10-27"
-            string key = $"OpeningBalance_{DateTime.Now:yyyy-MM-dd}"; // Key stays Local Date for user sanity
-            var setting = await localDb.SystemSettings.FirstOrDefaultAsync(s => s.Key == key);
-
+            string key = $"OpeningBalance_{DateTime.Now:yyyy-MM-dd}";
+            // var setting = await localDb.SystemSettings.FirstOrDefaultAsync(s => s.Key == key);
+            var setting = await localDb.SystemSettings
+    .FirstOrDefaultAsync(s => s.Key == key && s.TenantId == PosState.CurrentUnit.TenantId);
             if (setting != null && decimal.TryParse(setting.Value, out decimal val))
             {
                 DailyOpeningBalance = val;
@@ -764,33 +779,12 @@ else
                 DailyOpeningBalance = 0;
             }
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Stats Error: " + ex.Message);
-        }
+        catch (Exception ex) { Console.WriteLine("Stats Error: " + ex.Message); }
     }
 
     private async Task SetOpeningBalance()
     {
-        // [FIX] Replaced JS Prompt with MudBlazor Input Dialog
-        var parameters = new DialogParameters();
-        parameters.Add("ContentText", "Enter total cash in drawer to start the day:");
-        parameters.Add("ButtonText", "Set Balance");
-        parameters.Add("Color", Color.Primary);
-
-        // We use a simple input dialog pattern here
-        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.ExtraSmall };
-
-        // Use the built-in 'Prompt' logic via a custom render or simple text field
-        // Since we don't have a specific 'InputDialog' file, we will inject a quick render fragment
-        // OR simply use the 'MessageBox' if you just want confirmation.
-        // BUT, you need INPUT.
-
-        // QUICKEST FIX: Use a simple JS prompt safely, OR create a proper dialog.
-        // Let's try the safest JS method first which works 100% without new files:
-
         string input = await JS.InvokeAsync<string>("prompt", "Enter Opening Cash Amount:", DailyOpeningBalance.ToString());
-
         if (!string.IsNullOrEmpty(input) && decimal.TryParse(input, out decimal newBalance))
         {
             await SaveOpeningBalance(newBalance);
@@ -802,10 +796,7 @@ else
         try
         {
             using var localDb = await LocalDbFactory.CreateDbContextAsync();
-
-            // Key uses LOCAL date because "Opening Balance" is a concept for the Store's Day (not UTC)
             string key = $"OpeningBalance_{DateTime.Now:yyyy-MM-dd}";
-
             var setting = await localDb.SystemSettings.FirstOrDefaultAsync(s => s.Key == key);
             if (setting == null)
             {
@@ -822,28 +813,20 @@ else
             {
                 setting.Value = amount.ToString();
             }
-
             await localDb.SaveChangesAsync();
             DailyOpeningBalance = amount;
             StateHasChanged();
             Snackbar.Add("Opening Balance Updated", Severity.Success);
         }
-        catch (Exception ex)
-        {
-            Snackbar.Add("Failed to save balance: " + ex.Message, Severity.Error);
-        }
+        catch (Exception ex) { Snackbar.Add("Failed to save balance: " + ex.Message, Severity.Error); }
     }
-    // ==========================================
-    // RAZORPAY PAYMENT LOGIC
-    // ==========================================
+
     private async Task InitiateRazorpayPayment()
     {
         isProcessingPayment = true;
         StateHasChanged();
-
         try
         {
-            // 1. Get Public Key from Service
             var keyId = await PaymentService.GetPublicKeyAsync();
             if (string.IsNullOrEmpty(keyId))
             {
@@ -851,29 +834,18 @@ else
                 isProcessingPayment = false;
                 return;
             }
-
-            // 2. Create Order on Server
-            // Use a temporary receipt ID for Razorpay tracking
             var receiptId = $"RCPT-{DateTime.Now.Ticks}";
             var orderId = await PaymentService.CreateOrderAsync(CartTotal, receiptId);
-
-            // 3. Prepare JS Options
             var options = new
             {
                 key = keyId,
-                amount = (int)(CartTotal * 100), // In Paise
+                amount = (int)(CartTotal * 100),
                 currency = "INR",
                 name = PosState.CurrentUnit?.Name ?? "Store",
                 description = $"Bill Payment #{receiptId}",
                 order_id = orderId,
-                prefill = new
-                {
-                    name = CurrentCustomerName ?? "",
-                    contact = CurrentCustomerPhone ?? ""
-                }
+                prefill = new { name = CurrentCustomerName ?? "", contact = CurrentCustomerPhone ?? "" }
             };
-
-            // 4. Open Checkout via JS
             await JS.InvokeVoidAsync("razorpayInterop.openCheckout", options, objRef);
         }
         catch (Exception ex)
@@ -882,31 +854,21 @@ else
             isProcessingPayment = false;
         }
     }
+
     [JSInvokable]
     public async Task OnRazorpaySuccess(string rzpOrderId, string rzpPaymentId, string rzpSignature)
     {
-        // DEBUG LOG 1
         Snackbar.Add("Payment received from Razorpay. Verifying...", Severity.Info);
-
         try
         {
-            // 5. Verify Signature on Server
             bool isValid = await PaymentService.VerifyPaymentSignature(rzpOrderId, rzpPaymentId, rzpSignature);
-
             if (isValid)
             {
-                // DEBUG LOG 2
                 Snackbar.Add("Signature Valid! Saving Order...", Severity.Success);
-
-                // IMPORTANT: Wrap in InvokeAsync to ensure UI updates on the correct thread
-                await InvokeAsync(async () =>
-                {
-                    await ProcessPayment("Online (Razorpay)", rzpPaymentId);
-                });
+                await InvokeAsync(async () => { await ProcessPayment("Online (Razorpay)", rzpPaymentId); });
             }
             else
             {
-                // DEBUG LOG 3 - FAILURE
                 Snackbar.Add("SECURITY ALERT: Payment Signature Invalid! Order not saved.", Severity.Error);
                 isProcessingPayment = false;
                 await InvokeAsync(StateHasChanged);
@@ -915,49 +877,27 @@ else
         catch (Exception ex)
         {
             Snackbar.Add($"CRITICAL ERROR in Callback: {ex.Message}", Severity.Error);
-            Console.WriteLine(ex.ToString());
             isProcessingPayment = false;
             await InvokeAsync(StateHasChanged);
         }
     }
-    // [JSInvokable]
-    // public async Task OnRazorpaySuccess(string rzpOrderId, string rzpPaymentId, string rzpSignature)
-    // {
-    //     // 5. Verify Signature on Server
-    //     bool isValid = await PaymentService.VerifyPaymentSignature(rzpOrderId, rzpPaymentId, rzpSignature);
 
-    //     if (isValid)
-    //     {
-    //         // If valid, save order with Razorpay Payment ID
-    //         await ProcessPayment("Online (Razorpay)", rzpPaymentId);
-    //     }
-    //     else
-    //     {
-    //         Snackbar.Add("Payment Verification Failed! Security Alert.", Severity.Error);
-    //         isProcessingPayment = false;
-    //         StateHasChanged();
-    //     }
-    // }
-
-    // --- GENERIC PAYMENT PROCESSOR ---
     private async Task ProcessPayment(string method, string? referenceId = null)
     {
         isPaymentDialogVisible = false;
-        isProcessingPayment = false; // Reset UI
+        isProcessingPayment = false;
         isListeningForWebhook = false;
         Snackbar.Add("Processing Transaction...", Severity.Info);
-
         try
         {
             using var localDb = await LocalDbFactory.CreateDbContextAsync();
-
             var newOrder = new Order
             {
                 Id = Guid.NewGuid().ToString(),
                 OrderNumber = $"ORD-{DateTime.Now:yyyyMMdd}-{DateTime.Now.Ticks.ToString().Substring(10)}",
                 TotalAmount = CartTotal,
                 PaymentMethod = method,
-                PaymentReferenceId = referenceId, // [NEW] Store Razorpay ID
+                PaymentReferenceId = referenceId,
                 Status = "Completed",
                 CreatedAt = DateTime.UtcNow,
                 CustomerName = CurrentCustomerName,
@@ -966,7 +906,6 @@ else
                 TenantId = PosState.CurrentUnit?.TenantId ?? "",
                 IsSynced = false
             };
-
             foreach (var item in CartItems)
             {
                 newOrder.OrderItems.Add(new OrderItem
@@ -982,11 +921,8 @@ else
                 });
                 if (ProductStock.ContainsKey(item.ProductId)) ProductStock[item.ProductId] -= item.Quantity;
             }
-
             localDb.Orders.Add(newOrder);
             await localDb.SaveChangesAsync();
-
-            // Background Stock Update
             _ = Task.Run(async () =>
             {
                 try
@@ -1000,12 +936,9 @@ else
                 }
                 catch (Exception ex) { Console.WriteLine("Background Stock Update Failed: " + ex.Message); }
             });
-
             Snackbar.Add($"Order {newOrder.OrderNumber} Completed!", Severity.Success);
-
             string storeName = PosState.CurrentUnit?.Name ?? "My POS Store";
             await ReceiptPrinter.PrintAsync(newOrder, storeName, "123 Main St");
-
             ClearCart();
             await UpdateSyncStatus();
             await LoadDailyStats();
@@ -1014,7 +947,6 @@ else
         catch (Exception ex)
         {
             Snackbar.Add($"Transaction Failed: {ex.Message}", Severity.Error);
-            Console.WriteLine(ex.ToString());
         }
     }
 
@@ -1052,19 +984,8 @@ else
         objRef?.Dispose();
         PosState.OnChange -= StateHasChanged;
         _syncTimer?.Dispose();
-
-        // Clean up SignalR
-        if (hubConnection is not null)
-        {
-            await hubConnection.DisposeAsync();
-        }
+        if (hubConnection is not null) { await hubConnection.DisposeAsync(); }
     }
-    // public void Dispose()
-    // {
-    //     objRef?.Dispose(); // Dispose JS Reference
-    //     PosState.OnChange -= StateHasChanged;
-    //     _syncTimer?.Dispose();
-    // }
 
     public class CartItem
     {

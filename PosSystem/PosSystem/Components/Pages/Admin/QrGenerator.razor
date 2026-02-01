@@ -1,0 +1,60 @@
+﻿@page "/admin/qr-generator"
+@using PosSystem.Services
+@inject QrCoreService QrService
+@inject PosStateService PosState
+@inject NavigationManager Navigation 
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
+    <MudText Typo="Typo.h5" Class="mb-4">Admin QR Utility</MudText>
+
+    <MudGrid>
+        <MudItem xs="12" md="6">
+            <MudCard Elevation="4">
+                <MudCardContent>
+                    <MudSelect T="string" Label="Generation Mode" @bind-Value="mode">
+                        <MudSelectItem Value="@("Facility")">Static Facility Scan (Public)</MudSelectItem>
+                        <MudSelectItem Value="@("Custom")">Encrypted Custom Link</MudSelectItem>
+                    </MudSelect>
+
+                    <MudTextField @bind-Value="payload" Label="ID or URL" Class="mt-4" Variant="Variant.Outlined" />
+
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" OnClick="Generate">
+                        Generate & Preview
+                    </MudButton>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        <MudItem xs="12" md="6">
+            @if (!string.IsNullOrEmpty(qrImage))
+            {
+                    <MudPaper Class="pa-4 d-flex flex-column align-center">
+                        <img src="@qrImage" style="width:250px; height:250px;" />
+                        <MudText Typo="Typo.caption" Class="mt-2" Style="word-break: break-all;">@finalUrl</MudText>
+                    </MudPaper>
+            }
+        </MudItem>
+    </MudGrid>
+</MudContainer>
+
+@code {
+    private string mode = "Facility";
+    private string payload = "";
+    private string qrImage = "";
+    private string finalUrl = "";
+
+    private void Generate()
+    {
+        if (mode == "Facility")
+        {
+            // [FIX 2] Use the injected instance 'Navigation' instead of the class name 'NavigationManager'
+            finalUrl = $"{Navigation.BaseUri}self-help/{payload}";
+        }
+        else
+        {
+            // Encrypted link for sensitive data
+            finalUrl = QrService.CreateSecureUrl("Admin", payload);
+        }
+        qrImage = QrService.GenerateQrImage(finalUrl);
+    }
+}

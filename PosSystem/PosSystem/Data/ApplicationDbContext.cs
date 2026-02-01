@@ -34,6 +34,8 @@ namespace PosSystem.Data
         public DbSet<Order> Orders { get; set; }
         public DbSet<OrderItem> OrderItems { get; set; }
         public DbSet<StockMovement> StockMovements { get; set; }
+        public DbSet<FacilityTicket> FacilityTickets { get; set; }
+        public DbSet<Membership> Memberships { get; set; }
         protected override void OnModelCreating(ModelBuilder builder)
         {
             base.OnModelCreating(builder);
@@ -72,7 +74,11 @@ namespace PosSystem.Data
                 .HasForeignKey(up => up.ProductId)
                 .OnDelete(DeleteBehavior.NoAction); // If Product deleted, handle carefully (usually soft delete)
 
+            builder.Entity<FacilityTicket>().HasQueryFilter(e =>
+                GetIdInternal() == null || e.TenantId == GetIdInternal());
 
+            builder.Entity<Membership>().HasQueryFilter(e =>
+                GetIdInternal() == null || e.TenantId == GetIdInternal());
             // --- 3. SEEDING DEFAULT DATA ---
 
             // A. Seed Business Categories (Managed by Super Admin)

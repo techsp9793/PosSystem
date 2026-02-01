@@ -1,0 +1,380 @@
+﻿@page "/self-help"
+@layout PosSystem.Components.Layout.SelfHelpLayout
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Services
+@using PosSystem.Data
+@using PosSystem.Data.Entities
+@using Microsoft.EntityFrameworkCore
+@attribute [AllowAnonymous]
+
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject PosSystem.Services.IPaymentService PaymentService
+
+<PageTitle>Kiosk</PageTitle>
+
+@if (isProcessing)
+{
+    <div class="d-flex flex-column align-center justify-center" style="height: 100vh;">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Large" />
+        <MudText Typo="Typo.h5" Class="mt-4">Processing Payment...</MudText>
+        <MudText Typo="Typo.body1">Please check the payment popup.</MudText>
+    </div>
+}
+else
+{
+    <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0 h-100" Style="height: calc(100vh - 64px); overflow: hidden;">
+        <MudGrid Class="h-100 ma-0" Spacing="0">
+
+            @* --- 1. LEFT PANE: CATEGORIES (Hidden on Mobile unless toggled) --- *@
+            <MudItem xs="12" md="2" Class="@(ShowMobileCategories ? "d-flex flex-column mud-theme-surface border-end h-100 absolute-mobile-layer" : "d-none d-md-flex flex-column mud-theme-surface border-end h-100")">
+                <div class="pa-3 bg-surface border-bottom d-flex justify-space-between align-center">
+                    <MudText Typo="Typo.button" Color="Color.Primary"><b>CATEGORIES</b></MudText>
+                    <MudIconButton Icon="@Icons.Material.Filled.Close" Class="d-md-none" OnClick="() => ShowMobileCategories = false" />
+                </div>
+                <div class="flex-grow-1 overflow-auto">
+                    <MudList T="string" SelectedValue="SelectedCategory" Clickable="true" Dense="true">
+                        <MudListItem Text="ALL TICKETS" OnClick="@(() => FilterCategory("All"))"
+                                     Class="@(SelectedCategory == "All" ? "bg-primary-light" : "")" />
+                        @foreach (var cat in Categories)
+                        {
+                            <MudListItem Text="@cat.Name" OnClick="@(() => FilterCategory(cat.Id))"
+                                         Class="@(SelectedCategory == cat.Id ? "bg-primary-light" : "")" />
+                        }
+                    </MudList>
+                </div>
+            </MudItem>
+
+            @* --- 2. CENTER PANE: PRODUCTS (Always Visible) --- *@
+            <MudItem xs="12" md="6" Class="d-flex flex-column mud-theme-background border-end h-100 relative">
+
+                @* Mobile Header: Category Button *@
+                <div class="d-md-none pa-2 bg-surface border-bottom d-flex align-center gap-2">
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Category" OnClick="() => ShowMobileCategories = true" FullWidth="true">
+                        @(SelectedCategory == "All" ? "Categories" : Categories.FirstOrDefault(c => c.Id == SelectedCategory)?.Name)
+                    </MudButton>
+                </div>
+
+                @* Search Bar *@
+                <div class="pa-3 mud-theme-surface border-bottom">
+                    <MudTextField @bind-Value="SearchTerm" Placeholder="Search Tickets..."
+                                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true"
+                                  TextChanged="OnSearchChanged" />
+                </div>
+
+                @* Product Grid *@
+                <div class="flex-grow-1 overflow-auto pa-3 pb-16">
+                    @* pb-16 for mobile cart fab space *@
+                    <MudGrid Spacing="2">
+                        @foreach (var product in FilteredProducts)
+                        {
+                            <MudItem xs="12" sm="6" md="4">
+                                <MudCard Class="d-flex flex-row flex-md-column align-center justify-space-between cursor-pointer hover-effect pa-3 rounded-lg"
+                                         Elevation="2" @onclick="() => UpdateQty(product, 1)">
+
+                                    <div class="d-flex flex-column">
+                                        <MudText Typo="Typo.body1" Style="font-weight:bold; line-height:1.2;">@product.Name</MudText>
+                                        <MudText Typo="Typo.body2" Color="Color.Primary" Class="mt-1">@CurrencySymbol@product.BasePrice.ToString("0.##")</MudText>
+                                    </div>
+
+                                    <div class="d-flex flex-column align-center ml-2">
+                                        @if (GetQty(product.Id) > 0)
+                                        {
+                                            <MudChip T="string" Color="Color.Primary" Size="Size.Small" Variant="Variant.Filled">
+                                                x @GetQty(product.Id)
+                                            </MudChip>
+                                        }
+                                        else
+                                        {
+                                            <MudIcon Icon="@Icons.Material.Filled.AddCircleOutline" Color="Color.Default" />
+                                        }
+                                    </div>
+                                </MudCard>
+                            </MudItem>
+                        }
+                    </MudGrid>
+                </div>
+            </MudItem>
+
+            @* --- 3. RIGHT PANE: CART (Mobile: Slide-up Drawer / Desktop: Fixed Column) --- *@
+            <MudItem xs="12" md="4" Class="@(ShowMobileCart ? "mobile-cart-drawer d-flex flex-column mud-theme-surface shadow-lg h-100" : "d-none d-md-flex flex-column mud-theme-surface shadow-lg h-100")">
+
+                @* Mobile Close Handle *@
+                <div class="d-md-none pa-2 text-center bg-surface border-bottom" @onclick="() => ShowMobileCart = false">
+                    <MudIcon Icon="@Icons.Material.Filled.KeyboardArrowDown" />
+                </div>
+
+                <div class="pa-3 bg-surface border-bottom">
+                    <MudText Typo="Typo.h6" Align="Align.Center"><b>Your Selections</b></MudText>
+                </div>
+
+                @* Cart Items List *@
+                <div class="flex-grow-1 overflow-auto px-4 py-2">
+                    @if (!Cart.Any())
+                    {
+                        <div class="d-flex flex-column align-center justify-center h-100 text-muted">
+                            <MudIcon Icon="@Icons.Material.Filled.ShoppingBag" Size="Size.Large" Style="opacity:0.3;" />
+                            <MudText Class="mt-2">Cart is empty</MudText>
+                        </div>
+                    }
+                    else
+                    {
+                        @foreach (var item in Cart)
+                        {
+                            var prod = AllProducts.First(p => p.Id == item.Key);
+                            var lineTotal = prod.BasePrice * item.Value;
+
+                            <div class="d-flex justify-space-between align-center py-3 border-bottom-dashed">
+                                <div style="flex:1">
+                                    <MudText Typo="Typo.body1"><b>@prod.Name</b></MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                        @item.Value x @CurrencySymbol@prod.BasePrice
+                                    </MudText>
+                                </div>
+                                <div class="d-flex align-center gap-2">
+                                    <MudIconButton Icon="@Icons.Material.Filled.RemoveCircleOutline" Size="Size.Small" OnClick="() => UpdateQty(prod, -1)" />
+                                    <MudText Typo="Typo.body1"><b>@item.Value</b></MudText>
+                                    <MudIconButton Icon="@Icons.Material.Filled.AddCircle" Size="Size.Small" Color="Color.Primary" OnClick="() => UpdateQty(prod, 1)" />
+                                </div>
+                                <div class="text-end" style="min-width: 60px;">
+                                    <MudText Typo="Typo.body1"><b>@CurrencySymbol@lineTotal.ToString("0.##")</b></MudText>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+
+                @* Checkout Footer *@
+                <div class="pa-4 border-top mud-theme-surface">
+                    <MudTextField @bind-Value="CustomerMobile" Label="Mobile Number" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" />
+
+                    <div class="d-flex justify-space-between mb-3">
+                        <MudText Typo="Typo.h6"><b>Total</b></MudText>
+                        <MudText Typo="Typo.h4" Color="Color.Success"><b>@CurrencySymbol@CartTotal.ToString("0.##")</b></MudText>
+                    </div>
+
+                    <MudButton Variant="Variant.Filled" Color="Color.Success" FullWidth="true" Size="Size.Large"
+                               OnClick="InitiatePayment" Disabled="@(!Cart.Any())" Class="py-3">
+                        PAY NOW
+                    </MudButton>
+                </div>
+            </MudItem>
+        </MudGrid>
+
+        @* --- MOBILE FLOATING BUTTON (Only visible on small screens when items exist) --- *@
+        @if (Cart.Any() && !ShowMobileCart)
+        {
+            <div class="d-md-none fixed-bottom pa-4" style="position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Size="Size.Large"
+                           OnClick="() => ShowMobileCart = true" Class="rounded-pill shadow-lg py-3">
+                    View Cart • @CurrencySymbol@CartTotal.ToString("0.##")
+                </MudButton>
+            </div>
+        }
+    </MudContainer>
+}
+
+<style>
+    .bg-primary-light {
+        background-color: rgba(var(--mud-palette-primary-rgb), 0.1);
+        border-right: 4px solid var(--mud-palette-primary);
+        font-weight: bold;
+    }
+
+    .border-bottom-dashed {
+        border-bottom: 1px dashed #ddd;
+    }
+
+    .hover-effect:active {
+        transform: scale(0.98);
+        background-color: #f5f5f5;
+    }
+
+    /* Mobile Overlays */
+    @@media (max-width: 960px) {
+        .absolute-mobile-layer {
+            position: fixed;
+            top: 64px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 300;
+            background-color: white;
+            animation: slideInLeft 0.3s;
+        }
+
+        .mobile-cart-drawer {
+            position: fixed;
+            top: 100px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 300;
+            background-color: white;
+            border-top-left-radius: 16px;
+            border-top-right-radius: 16px;
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.2);
+            animation: slideUp 0.3s;
+        }
+    }
+
+    @@keyframes slideInLeft {
+        from {
+            transform: translateX(-100%);
+        }
+
+        to {
+            transform: translateX(0);
+        }
+    }
+
+    @@keyframes slideUp {
+        from {
+            transform: translateY(100%);
+        }
+
+        to {
+            transform: translateY(0);
+        }
+    }
+</style>
+
+@code {
+    private bool ShowMobileCategories = false;
+    private bool ShowMobileCart = false;
+
+    private List<Product> AllProducts = new();
+    private List<Product> FilteredProducts = new();
+    private List<ItemCategory> Categories = new();
+    private List<Product> Products => AllProducts;
+
+    private Dictionary<string, int> Cart = new();
+    private string SelectedCategory = "All";
+    private string SearchTerm = "";
+    private string CurrencySymbol = "₹";
+    private string CustomerMobile = "";
+    private bool isProcessing = false;
+    private decimal CartTotal => Cart.Sum(x => x.Value * (AllProducts.FirstOrDefault(p => p.Id == x.Key)?.BasePrice ?? 0));
+
+    private DotNetObjectReference<SelfHelp>? objRef;
+
+    protected override async Task OnInitializedAsync()
+    {
+        objRef = DotNetObjectReference.Create(this);
+        using var db = await DbFactory.CreateDbContextAsync();
+
+        Categories = await db.Categories.AsNoTracking().ToListAsync();
+        AllProducts = await db.Products.AsNoTracking().Where(p => p.IsPosVisible).ToListAsync();
+        FilteredProducts = AllProducts;
+    }
+
+    private void FilterCategory(string catId)
+    {
+        SelectedCategory = catId;
+        ShowMobileCategories = false; // Close drawer
+        ApplyFilters();
+    }
+
+    private void OnSearchChanged(string text)
+    {
+        SearchTerm = text;
+        ApplyFilters();
+    }
+
+    private void ApplyFilters()
+    {
+        var query = AllProducts.AsEnumerable();
+        if (SelectedCategory != "All") query = query.Where(p => p.CategoryId == SelectedCategory);
+        if (!string.IsNullOrWhiteSpace(SearchTerm)) query = query.Where(p => p.Name.Contains(SearchTerm, StringComparison.OrdinalIgnoreCase));
+        FilteredProducts = query.ToList();
+    }
+
+    private int GetQty(string pId) => Cart.ContainsKey(pId) ? Cart[pId] : 0;
+
+    private void UpdateQty(Product p, int change)
+    {
+        if (!Cart.ContainsKey(p.Id)) Cart[p.Id] = 0;
+        Cart[p.Id] += change;
+        if (Cart[p.Id] <= 0) Cart.Remove(p.Id);
+    }
+
+    private async Task InitiatePayment()
+    {
+        isProcessing = true;
+        try
+        {
+            var keyId = await PaymentService.GetPublicKeyAsync();
+            var receiptId = $"TICKET-{DateTime.UtcNow.Ticks}";
+            var notes = new Dictionary<string, string> { { "source", "self-help" } };
+            var orderId = await PaymentService.CreateOrderAsync(CartTotal, receiptId, notes);
+
+            var options = new
+            {
+                key = keyId,
+                amount = (int)(CartTotal * 100),
+                currency = "INR",
+                name = "Kiosk Checkout",
+                description = "Tickets",
+                order_id = orderId,
+                prefill = new { contact = CustomerMobile }
+            };
+
+            await JS.InvokeVoidAsync("razorpayInterop.openCheckout", options, objRef);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Error: " + ex.Message, Severity.Error);
+            isProcessing = false;
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnRazorpaySuccess(string rzpOrderId, string rzpPaymentId, string rzpSignature)
+    {
+        var isValid = await PaymentService.VerifyPaymentSignature(rzpOrderId, rzpPaymentId, rzpSignature);
+        if (isValid)
+        {
+            await InvokeAsync(async () => await CreateTicketsAndRedirect(rzpOrderId));
+        }
+        else
+        {
+            Snackbar.Add("Payment Verification Failed", Severity.Error);
+            isProcessing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task CreateTicketsAndRedirect(string orderId)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+
+        var tickets = new List<FacilityTicket>();
+        var groupId = orderId;
+
+        foreach (var item in Cart)
+        {
+            var prod = AllProducts.First(p => p.Id == item.Key);
+            for (int i = 0; i < item.Value; i++)
+            {
+                tickets.Add(new FacilityTicket
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    OrderId = groupId,
+                    ProductId = prod.Id,
+                    TicketCode = "",
+                    CreatedAt = DateTime.UtcNow,
+                    ExpiryDate = DateTime.UtcNow.AddDays(1),
+                    TenantId = prod.TenantId ?? "default"
+                });
+            }
+        }
+
+        db.FacilityTickets.AddRange(tickets);
+        await db.SaveChangesAsync();
+
+        Navigation.NavigateTo($"/ticket-result/{groupId}");
+    }
+}

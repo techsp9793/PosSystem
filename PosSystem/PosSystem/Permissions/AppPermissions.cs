@@ -133,6 +133,12 @@ namespace PosSystem.Permissions
             public const string Receipts = "Permissions.Settings.Receipts"; // <--- FOR YOUR RECEIPT PAGE
             public const string Payments = "Permissions.Settings.Payments"; // Razorpay Keys (Sensitive!)
         }
+        public static class Facilities
+        {
+            public const string View = "Permissions.Facilities.View";
+            public const string GenerateQr = "Permissions.Facilities.GenerateQr";
+            public const string Gatekeeper = "Permissions.Facilities.Gatekeeper";
+        }
 
         // --- AUTO-DISCOVERY HELPER ---
         public static List<string> GetAllPermissions()

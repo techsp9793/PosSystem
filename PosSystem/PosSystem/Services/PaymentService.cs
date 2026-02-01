@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using PosSystem.Data;
+using PosSystem.Data.Entities;
 using PosSystem.Helpers;
 using Razorpay.Api;
 
@@ -7,19 +8,18 @@ namespace PosSystem.Services
 {
     public interface IPaymentService
     {
-        // Creates an order on Razorpay server and returns the "order_id" (e.g., "order_EKwx...")
-        Task<string> CreateOrderAsync(decimal amount, string receiptId);
-
-        // Verifies the signature returned by Razorpay after payment to ensure it's not fake
+        Task<string> CreateOrderAsync(decimal amount, string receiptId, Dictionary<string, string>? notes = null);
         Task<bool> VerifyPaymentSignature(string orderId, string paymentId, string signature);
         Task<string> GetPublicKeyAsync();
-        Task<string> GetWebhookSecretAsync(); // Add this
+        Task<string> GetWebhookSecretAsync();
     }
+
     public class PaymentService : IPaymentService
     {
         private readonly IDbContextFactory<ApplicationDbContext> _dbFactory;
         private readonly ITenantService _tenantService;
         private readonly IServiceScopeFactory _scopeFactory;
+
         public PaymentService(IDbContextFactory<ApplicationDbContext> dbFactory, ITenantService tenantService, IServiceScopeFactory scopeFactory)
         {
             _dbFactory = dbFactory;
@@ -27,7 +27,7 @@ namespace PosSystem.Services
             _scopeFactory = scopeFactory;
         }
 
-        public async Task<string> CreateOrderAsync(decimal amount, string receiptId)
+        public async Task<string> CreateOrderAsync(decimal amount, string receiptId, Dictionary<string, string>? notes = null)
         {
             var keys = await GetKeysAsync();
 
@@ -38,26 +38,29 @@ namespace PosSystem.Services
 
             try
             {
-                // 1. Initialize Razorpay Client with Tenant's Keys
                 var client = new RazorpayClient(keys.KeyId, keys.KeySecret);
 
-                // 2. Prepare Options
-                // Razorpay expects amount in PAISE (e.g., 100.00 INR -> 10000 paise)
                 var options = new Dictionary<string, object>
                 {
                     { "amount", (int)(amount * 100) },
                     { "currency", "INR" },
                     { "receipt", receiptId },
-                    { "payment_capture", 1 } // Auto-capture payment
+                    { "payment_capture", 1 }
                 };
 
-                // 3. Create Order
-                Order order = client.Order.Create(options);
+                if (notes != null)
+                {
+                    options.Add("notes", notes);
+                }
+
+                // [FIX: Ambiguity Solved]
+                // We specify 'Razorpay.Api.Order' so it doesn't confuse it with your Database Order entity.
+                Razorpay.Api.Order order = client.Order.Create(options);
+
                 return order["id"].ToString();
             }
             catch (Exception ex)
             {
-                // Log this error in real app
                 throw new Exception($"Razorpay Error: {ex.Message}");
             }
         }
@@ -77,7 +80,7 @@ namespace PosSystem.Services
                     { "razorpay_signature", signature }
                 };
 
-                // This utility throws an exception if verification fails
+                // Using the 1-argument version as per your working code
                 Utils.verifyPaymentSignature(attributes);
                 return true;
             }
@@ -86,18 +89,20 @@ namespace PosSystem.Services
                 return false;
             }
         }
+
         public async Task<string> GetPublicKeyAsync()
         {
             var keys = await GetKeysAsync();
             return keys.KeyId;
         }
+
         public async Task<string> GetWebhookSecretAsync()
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-            // Look for the Key in SystemSettings
             var setting = await db.SystemSettings
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(c => c.Key == "Razorpay_WebhookSecret");
 
             if (setting == null || string.IsNullOrEmpty(setting.Value)) return "";
@@ -108,21 +113,46 @@ namespace PosSystem.Services
             }
             catch
             {
-                return "";
+                return setting.Value;
             }
         }
-        // --- HELPER: Get Keys from DB ---
+
         private async Task<(string KeyId, string KeySecret)> GetKeysAsync()
         {
             var tenantId = _tenantService.GetTenantId();
             using var context = await _dbFactory.CreateDbContextAsync();
 
-            var settings = await context.SystemSettings
-                .Where(s => s.TenantId == tenantId && s.Key.StartsWith("Payment_Razorpay"))
+            IQueryable<SystemSetting> query = context.SystemSettings;
+
+            if (!string.IsNullOrEmpty(tenantId))
+            {
+                query = query.Where(s => s.TenantId == tenantId);
+            }
+            else
+            {
+                query = query.IgnoreQueryFilters();
+            }
+
+            var settings = await query
+                .Where(s => s.Key.StartsWith("Payment_Razorpay"))
                 .ToListAsync();
 
             var keyId = settings.FirstOrDefault(s => s.Key == "Payment_RazorpayKeyId")?.Value ?? "";
-            var keySecret = settings.FirstOrDefault(s => s.Key == "Payment_RazorpayKeySecret")?.Value ?? "";
+            var secretRaw = settings.FirstOrDefault(s => s.Key == "Payment_RazorpayKeySecret")?.Value ?? "";
+
+            var keySecret = secretRaw;
+
+            if (!string.IsNullOrEmpty(secretRaw))
+            {
+                try
+                {
+                    keySecret = EncryptionHelper.Decrypt(secretRaw);
+                }
+                catch
+                {
+                    keySecret = secretRaw;
+                }
+            }
 
             return (keyId, keySecret);
         }

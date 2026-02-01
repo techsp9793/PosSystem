@@ -33,7 +33,18 @@
                     </Authorized>
                 </AuthorizeView>
             </MudNavGroup>
-
+            <AuthorizeView Policy="@AppPermissions.Facilities.View">
+                <Authorized>
+                    <MudNavGroup Title="Facility Management" Icon="@Icons.Material.Filled.QrCodeScanner" Expanded="false">
+                        <AuthorizeView Policy="@AppPermissions.Facilities.GenerateQr" Context="qrContext">
+                            <MudNavLink Href="/admin/qr-generator" Icon="@Icons.Material.Filled.QrCode">QR Generator</MudNavLink>
+                        </AuthorizeView>
+                        <AuthorizeView Policy="@AppPermissions.Facilities.Gatekeeper" Context="gateContext">
+                            <MudNavLink Href="/admin/gatekeeper" Icon="@Icons.Material.Filled.Security">Gatekeeper Scanner</MudNavLink>
+                        </AuthorizeView>
+                    </MudNavGroup>
+                </Authorized>
+            </AuthorizeView>
             @* --- CATALOG --- *@
             <MudNavGroup Title="Catalog" Icon="@Icons.Material.Filled.Category" Expanded="true">
                 <MudNavLink Href="/catalog/products" Icon="@Icons.Material.Filled.Inventory2">

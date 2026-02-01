@@ -124,7 +124,10 @@ namespace PosSystem.Data.Seeders
                         AppPermissions.Inventory.View,
                         AppPermissions.Inventory.Edit,
                         AppPermissions.Settings.Receipts,
-                        AppPermissions.Settings.Payments // [NEW] Ensure they can see Payment Settings
+                        AppPermissions.Settings.Payments ,
+                        AppPermissions.Facilities.View,
+                        AppPermissions.Facilities.GenerateQr,
+                        AppPermissions.Facilities.Gatekeeper
                     };
 
                     // 3. Assign missing ones

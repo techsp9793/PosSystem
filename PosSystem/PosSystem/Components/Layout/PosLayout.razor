@@ -38,10 +38,36 @@
 </MudLayout>
 
 @code {
+    // protected override async Task OnInitializedAsync()
+    // {
+    //     PosState.OnChange += StateHasChanged;
+    //     await ThemeService.InitializeAsync();
+    // }
+
+    // private void ExitPos()
+    // {
+    //     PosState.ClearUnit();
+    //     Navigation.NavigateTo("/dashboard", forceLoad: true);
+    // }
+    // private async Task ToggleTheme()
+    // {
+    //     await ThemeService.SetDarkModeAsync(!ThemeService.IsDarkMode);
+    // }
+    // public void Dispose()
+    // {
+    //     PosState.OnChange -= StateHasChanged;
+    // }
     protected override async Task OnInitializedAsync()
     {
-        PosState.OnChange += StateHasChanged;
+        // Use InvokeAsync to ensure the UI update runs on the correct thread
+        PosState.OnChange += HandleStateChanged;
         await ThemeService.InitializeAsync();
+    }
+
+    // Helper method to handle the event safely
+    private void HandleStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
     }
 
     private void ExitPos()
@@ -49,12 +75,15 @@
         PosState.ClearUnit();
         Navigation.NavigateTo("/dashboard", forceLoad: true);
     }
+
     private async Task ToggleTheme()
     {
         await ThemeService.SetDarkModeAsync(!ThemeService.IsDarkMode);
     }
+
     public void Dispose()
     {
-        PosState.OnChange -= StateHasChanged;
+        // Unsubscribe using the same helper method
+        PosState.OnChange -= HandleStateChanged;
     }
 }

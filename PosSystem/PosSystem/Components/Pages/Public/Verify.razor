@@ -1,0 +1,267 @@
+﻿@page "/verify"
+@layout PosSystem.Components.Layout.SelfHelpLayout
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Services
+@using PosSystem.Data
+@using PosSystem.Data.Entities
+@using Microsoft.EntityFrameworkCore
+@attribute [AllowAnonymous]
+
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject QrCoreService QrService
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>Ticket Verification</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Small" Class="d-flex flex-column align-center justify-center pa-4" Style="min-height:80vh;">
+
+    @if (isLoading)
+    {
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Large" />
+        <MudText Class="mt-4">Verifying Ticket...</MudText>
+    }
+    else
+    {
+        <MudPaper Elevation="4" Class="pa-6 text-center rounded-xl" Style="width:100%; max-width:400px;">
+
+            <MudIcon Icon="@StatusIcon" Color="@StatusColor" Style="font-size: 5rem;" Class="mb-4" />
+
+            <MudText Typo="Typo.h4" Style="font-weight:900; text-transform:uppercase;" Color="@StatusColor">
+                @StatusTitle
+            </MudText>
+            <MudText Typo="Typo.body1" Class="mt-2 mb-4">@StatusMessage</MudText>
+
+            <MudDivider Class="my-4" />
+
+            @if (TicketDetails != null)
+            {
+                <div class="d-flex flex-column gap-2 text-start">
+                    <div class="d-flex justify-space-between">
+                        <MudText Typo="Typo.caption">Type</MudText>
+                        <MudText Typo="Typo.body2"><b>@TicketType</b></MudText>
+                    </div>
+                    @foreach (var line in TicketDetails)
+                    {
+                        <div class="d-flex justify-space-between">
+                            <MudText Typo="Typo.caption">@line.Key</MudText>
+                            <MudText Typo="Typo.body2"><b>@line.Value</b></MudText>
+                        </div>
+                    }
+                </div>
+            }
+
+            <div class="mt-6">
+                @if (CanAdmit && !IsUsed)
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Large" FullWidth="true" OnClick="MarkAsUsed">
+                        ADMIT ENTRANCE
+                    </MudButton>
+                }
+                else if (!CanAdmit)
+                {
+                    <MudAlert Severity="Severity.Info" Dense="true" Class="mt-2">
+                        Login as Guard to Admit
+                    </MudAlert>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Class="mt-2" OnClick="@(() => Navigation.NavigateTo("/Account/Login"))">
+                        Guard Login
+                    </MudButton>
+                }
+            </div>
+
+        </MudPaper>
+    }
+</MudContainer>
+
+@code {
+    [SupplyParameterFromQuery(Name = "data")]
+    public string? EncryptedData { get; set; }
+
+    private bool isLoading = true;
+    private bool IsUsed = false;
+    private bool CanAdmit = false;
+
+    private string StatusTitle = "Scanning...";
+    private string StatusMessage = "";
+    private string StatusIcon = Icons.Material.Filled.QrCodeScanner;
+    private Color StatusColor = Color.Default;
+    private string TicketType = "";
+    private Dictionary<string, string>? TicketDetails;
+
+    private string DecryptedId = "";
+    private string DecryptedType = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        CanAdmit = authState.User.Identity?.IsAuthenticated ?? false;
+
+        if (string.IsNullOrEmpty(EncryptedData))
+        {
+            SetStatus("ERROR", "No data found.", Icons.Material.Filled.Error, Color.Error);
+            isLoading = false;
+            return;
+        }
+
+        await VerifyToken();
+        isLoading = false;
+    }
+
+    private async Task VerifyToken()
+    {
+        try
+        {
+            // --- [SMART CLEANUP LOGIC] ---
+            string cleanData = EncryptedData ?? "";
+
+            // 1. If the data starts with "http", it's a double-wrapped URL. Unwrap it.
+            if (cleanData.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var uri = new Uri(cleanData);
+                    var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+                    var inner = query["data"];
+                    if (!string.IsNullOrEmpty(inner)) cleanData = inner;
+                }
+                catch { /* If parsing fails, use original */ }
+            }
+
+            // 2. Decode URL encoding (turns %2B back into +)
+            cleanData = System.Net.WebUtility.UrlDecode(cleanData);
+
+            // 3. Handle Spaces (Browsers sometimes turn + into Space)
+            cleanData = cleanData.Replace(" ", "+");
+            // -----------------------------
+
+            var (type, id, isValid) = QrService.VerifyQrData(cleanData);
+            DecryptedId = id;
+            DecryptedType = type;
+
+            if (!isValid)
+            {
+                SetStatus("INVALID", "Fake or corrupted QR code.", Icons.Material.Filled.Cancel, Color.Error);
+                return;
+            }
+
+            using var db = await DbFactory.CreateDbContextAsync();
+
+            if (type == "Group")
+            {
+                TicketType = "Group Order";
+                var tickets = await db.FacilityTickets
+                    .Include(t => t.Product)
+                    .IgnoreQueryFilters()
+                    .Where(t => t.OrderId == id)
+                    .ToListAsync();
+
+                if (!tickets.Any())
+                {
+                    SetStatus("NOT FOUND", "Order not found.", Icons.Material.Filled.SearchOff, Color.Warning);
+                    return;
+                }
+
+                int total = tickets.Count;
+                int used = tickets.Count(t => t.IsUsed);
+                int remaining = total - used;
+
+                TicketDetails = new Dictionary<string, string>
+                {
+                    { "Order ID", id.Substring(0, 8).ToUpper() },
+                    { "Total", total.ToString() },
+                    { "Admitted", used.ToString() },
+                    { "Remaining", remaining.ToString() }
+                };
+
+                if (remaining == 0)
+                {
+                    IsUsed = true;
+                    var lastUsed = tickets.Any() ? tickets.Max(t => t.UsedAt) : DateTime.UtcNow;
+                    SetStatus("ALREADY USED", $"Closed at {lastUsed:HH:mm}", Icons.Material.Filled.Warning, Color.Warning);
+                }
+                else
+                {
+                    SetStatus("VALID", $"{remaining} people can enter.", Icons.Material.Filled.CheckCircle, Color.Success);
+                }
+            }
+            else if (type == "Ticket")
+            {
+                TicketType = "Single Ticket";
+                var ticket = await db.FacilityTickets
+                    .Include(t => t.Product)
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(t => t.Id == id);
+
+                if (ticket == null)
+                {
+                    SetStatus("NOT FOUND", "Ticket not found.", Icons.Material.Filled.SearchOff, Color.Warning);
+                    return;
+                }
+
+                TicketDetails = new Dictionary<string, string>
+                {
+                    { "Ticket ID", ticket.Id.Substring(0, 8).ToUpper() },
+                    { "Product", ticket.Product?.Name ?? "Unknown" },
+                    { "Date", ticket.CreatedAt.ToString("dd MMM") }
+                };
+
+                if (ticket.IsUsed)
+                {
+                    IsUsed = true;
+                    SetStatus("USED", $"Scanned at {ticket.UsedAt:HH:mm}", Icons.Material.Filled.Warning, Color.Warning);
+                }
+                else
+                {
+                    SetStatus("VALID", "Ticket is valid.", Icons.Material.Filled.CheckCircle, Color.Success);
+                }
+            }
+            else
+            {
+                SetStatus("UNKNOWN", "QR Type not supported.", Icons.Material.Filled.Help, Color.Info);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetStatus("ERROR", "System Error: " + ex.Message, Icons.Material.Filled.Error, Color.Error);
+        }
+    }
+
+    private async Task MarkAsUsed()
+    {
+        if (!CanAdmit) return;
+        isLoading = true;
+
+        using var db = await DbFactory.CreateDbContextAsync();
+
+        if (DecryptedType == "Group")
+        {
+            var tickets = await db.FacilityTickets.IgnoreQueryFilters().Where(t => t.OrderId == DecryptedId && !t.IsUsed).ToListAsync();
+            foreach (var t in tickets) { t.IsUsed = true; t.UsedAt = DateTime.UtcNow; }
+            await db.SaveChangesAsync();
+            Snackbar.Add($"{tickets.Count} tickets admitted!", Severity.Success);
+        }
+        else if (DecryptedType == "Ticket")
+        {
+            var ticket = await db.FacilityTickets.IgnoreQueryFilters().FirstOrDefaultAsync(t => t.Id == DecryptedId);
+            if (ticket != null && !ticket.IsUsed)
+            {
+                ticket.IsUsed = true;
+                ticket.UsedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+                Snackbar.Add("Ticket admitted!", Severity.Success);
+            }
+        }
+
+        await VerifyToken();
+        isLoading = false;
+    }
+
+    private void SetStatus(string title, string msg, string icon, Color color)
+    {
+        StatusTitle = title;
+        StatusMessage = msg;
+        StatusIcon = icon;
+        StatusColor = color;
+    }
+}
