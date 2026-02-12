@@ -8,6 +8,7 @@
 
 @inject TerminologyService Terminology
 @inject IUnitOfWork UnitOfWork
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
 
 <MudDialog>
     <DialogContent>
@@ -48,8 +49,23 @@
                                              AdornmentText="@CurrencySymbol" />
                         </MudItem>
 
+                        @* --- NEW: Measurement Unit (Per Item, Per Hour, etc) --- *@
+                        <MudItem xs="12" sm="6">
+                            <MudSelect T="string" Label="Pricing Unit"
+                                       @bind-Value="Model.MeasurementUnitId"
+                                       Variant="Variant.Outlined"
+                                       Clearable="true"
+                                       HelperText="e.g. Per Person, Per Kg"
+                                       AnchorOrigin="Origin.BottomCenter">
+                                @foreach (var mUnit in MeasurementUnits)
+                                {
+                                    <MudSelectItem Value="@mUnit.Id">@mUnit.Name (@mUnit.Symbol)</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+
                         @* SKU *@
-                        <MudItem xs="12">
+                        <MudItem xs="12" sm="6">
                             <MudTextField @bind-Value="Model.SKU"
                                           Label="SKU / Barcode"
                                           Variant="Variant.Outlined" />
@@ -130,6 +146,9 @@
     private List<ItemCategory> Categories = new();
     private List<Unit> AllUnits = new();
 
+    // [NEW] List for Dropdown
+    private List<MeasurementUnit> MeasurementUnits = new();
+
     // To track checked units
     private HashSet<string> SelectedUnitIds = new();
 
@@ -140,6 +159,10 @@
         Categories = (await UnitOfWork.Categories.GetAllAsync()).ToList();
         AllUnits = (await UnitOfWork.Units.GetAllAsync()).ToList();
         CurrencySymbol = Terminology.GetText("CurrencySymbol", "$");
+
+        // [NEW] Fetch Measurement Units directly
+        using var db = await DbFactory.CreateDbContextAsync();
+        MeasurementUnits = await db.MeasurementUnits.ToListAsync();
 
         // If editing, load existing connections
         if (!string.IsNullOrEmpty(Model.Id))

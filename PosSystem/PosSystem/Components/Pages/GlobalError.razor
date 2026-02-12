@@ -1,0 +1,40 @@
+﻿@using Microsoft.AspNetCore.Components.Web
+
+<div class="d-flex flex-column align-center justify-center" style="height: 100vh; width: 100vw; background-color: #f8f9fa;">
+    <MudPaper Elevation="4" Class="pa-8 d-flex flex-column align-center" Style="max-width: 500px; border-radius: 12px;">
+
+        <MudIcon Icon="@Icons.Material.Filled.ErrorOutline" Color="Color.Error" Style="font-size: 5rem;" Class="mb-4" />
+
+        <MudText Typo="Typo.h4" Color="Color.Error" Class="mb-2"><b>System Error</b></MudText>
+
+        <MudText Typo="Typo.body1" Align="Align.Center" Class="mb-4 text-muted">
+            We encountered an unexpected problem. <br />
+            Please reload the system to continue.
+        </MudText>
+
+        @if (Exception != null)
+        {
+            @* Optional: Show error details only if you are an Admin, otherwise hide this block *@
+            <MudAlert Severity="Severity.Error" Dense="true" Class="mb-4 w-100">
+                <small>@Exception.Message</small>
+            </MudAlert>
+        }
+
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large" OnClick="ReloadApplication" StartIcon="@Icons.Material.Filled.Refresh">
+            Reload System
+        </MudButton>
+
+    </MudPaper>
+</div>
+
+@code {
+    [Parameter] public Exception? Exception { get; set; }
+
+    [Inject] NavigationManager Navigation { get; set; } = default!;
+
+    private void ReloadApplication()
+    {
+        // Force a hard reload from the server
+        Navigation.NavigateTo(Navigation.Uri, forceLoad: true);
+    }
+}

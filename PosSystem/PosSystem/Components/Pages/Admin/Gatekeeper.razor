@@ -1,4 +1,6 @@
 ﻿@page "/admin/gatekeeper"
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Permissions
 @using PosSystem.Services
 @using PosSystem.Data
 @using PosSystem.Data.Entities
@@ -7,7 +9,7 @@
 @inject IDbContextFactory<ApplicationDbContext> DbFactory
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
-
+@attribute [Authorize(Policy = AppPermissions.Facilities.Gatekeeper)]
 <MudContainer MaxWidth="MaxWidth.Small" Class="mt-4">
     <MudText Typo="Typo.h5" Class="mb-4 text-center">Gatekeeper Validation</MudText>
 
@@ -44,58 +46,11 @@
                 </div>
             </MudTabPanel>
 
-            @* TAB 2: MANUAL LOOKUP *@
-            <MudTabPanel Text="Manual Search" Icon="@Icons.Material.Filled.Search">
-                <MudTextField @bind-Value="searchId"
-                              Label="Ticket ID (First 8 chars)"
-                              Variant="Variant.Outlined"
-                              Adornment="Adornment.End"
-                              AdornmentIcon="@Icons.Material.Filled.Search"
-                              OnAdornmentClick="ManualSearch"
-                              OnKeyDown="HandleManualKeyDown" />
-
-                @if (searchResults != null)
-                {
-                    @if (searchResults.Count == 0)
-                    {
-                        <MudText Class="mt-4 text-center text-muted">No tickets found.</MudText>
-                    }
-                    else
-                    {
-                        <MudList T="FacilityTicket" Class="mt-4">
-                            @foreach (var t in searchResults)
-                            {
-                                <MudListItem>
-                                    <div class="d-flex justify-space-between align-center width-100">
-                                        <div>
-                                            <MudText Typo="Typo.body1" Style="font-weight:bold;">@t.Product?.Name</MudText>
-                                            <MudText Typo="Typo.caption">ID: @t.Id.Substring(0, 8).ToUpper()</MudText>
-                                        </div>
-                                        @if (t.IsUsed)
-                                        {
-                                            <MudChip T="string" Color="Color.Error" Size="Size.Small" Variant="Variant.Outlined">USED</MudChip>
-                                        }
-                                        else
-                                        {
-                                            <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" OnClick="() => MarkManually(t)">
-                                                MARK USED
-                                            </MudButton>
-                                        }
-                                    </div>
-                                </MudListItem>
-                                <MudDivider />
-                            }
-                        </MudList>
-                    }
-                }
-            </MudTabPanel>
-
         </MudTabs>
     </MudPaper>
 </MudContainer>
 
 @code {
-    // --- SCANNER LOGIC ---
     private string scanBuffer = "";
     private bool isProcessing = false;
     private ValidationResult? lastResult;
@@ -124,7 +79,7 @@
 
         try
         {
-            // 1. Extract encrypted data from URL (if it's a full link)
+            // 1. Clean URL
             string encryptedData = rawUrl;
             if (rawUrl.Contains("data="))
             {
@@ -133,99 +88,78 @@
                 encryptedData = query.Get("data") ?? rawUrl;
             }
 
-            // 2. Decrypt and Verify
+            // 2. Decrypt
             var (type, id, isValid) = QrService.VerifyQrData(encryptedData);
 
             if (!isValid)
             {
-                lastResult = new ValidationResult("INVALID", "This code is fake or corrupted.", Severity.Error);
+                lastResult = new ValidationResult("INVALID", "Fake or corrupted QR code.", Severity.Error);
             }
             else
             {
                 using var db = await DbFactory.CreateDbContextAsync();
 
-                // --- SCENARIO A: GROUP TICKET (One QR for multiple people) ---
-                if (type == "Group")
+                // --- SCENARIO A: MEMBER ENTRY (New!) ---
+                if (type == "Member")
                 {
-                    // Find all tickets belonging to this Group Order ID
-                    var tickets = await db.Set<FacilityTicket>()
-                        .Include(t => t.Product)
-                        .Where(t => t.OrderId == id)
-                        .ToListAsync();
+                    var member = await db.Members.FirstOrDefaultAsync(m => m.QrToken == id);
 
-                    if (!tickets.Any())
+                    if (member == null)
                     {
-                        lastResult = new ValidationResult("NOT FOUND", "No tickets found for this order.", Severity.Warning);
+                        lastResult = new ValidationResult("NOT FOUND", "Member not found in database.", Severity.Warning);
+                    }
+                    else if (!member.IsActive)
+                    {
+                        lastResult = new ValidationResult("SUSPENDED", "Membership is inactive.", Severity.Error);
+                    }
+                    else if (member.ExpiryDate.HasValue && member.ExpiryDate.Value < DateTime.UtcNow)
+                    {
+                        lastResult = new ValidationResult("EXPIRED", $"Plan ended on {member.ExpiryDate:dd MMM}", Severity.Error);
                     }
                     else
                     {
-                        // Calculate how many are still unused
-                        var unusedCount = tickets.Count(t => !t.IsUsed);
-
-                        if (unusedCount == 0)
+                        // Log Visit
+                        db.MemberVisits.Add(new MemberVisit
                         {
-                            // If all used, show error (maybe show time of last use)
-                            var lastUsed = tickets.Max(t => t.UsedAt);
-                            lastResult = new ValidationResult("ALREADY USED", $"All tickets used. Last entry: {lastUsed:HH:mm}", Severity.Error);
-                        }
-                        else
-                        {
-                            // Auto-mark ALL remaining unused tickets as Used
-                            int count = 0;
-                            foreach (var t in tickets.Where(x => !x.IsUsed))
-                            {
-                                t.IsUsed = true;
-                                t.UsedAt = DateTime.UtcNow;
-                                count++;
-                            }
-                            await db.SaveChangesAsync();
+                            Id = Guid.NewGuid().ToString(),
+                            MemberId = member.Id,
+                            VisitTime = DateTime.UtcNow,
+                            EntryGate = "Gatekeeper Terminal",
+                            TenantId = member.TenantId
+                        });
+                        await db.SaveChangesAsync();
 
-                            // Generate a nice summary string (e.g., "2x Adult, 1x Child")
-                            var summary = string.Join(", ", tickets
-                                .GroupBy(t => t.Product?.Name ?? "Ticket")
-                                .Select(g => $"{g.Count()}x {g.Key}"));
+                        // Success Message
+                        string expiryText = member.ExpiryDate.HasValue
+                            ? $"Valid until {member.ExpiryDate:dd MMM}"
+                            : "Lifetime Member";
 
-                            lastResult = new ValidationResult("GROUP ENTRY ALLOWED", $"Admitted: {count} People. ({summary})", Severity.Success);
-                        }
+                        lastResult = new ValidationResult("WELCOME", $"{member.Name}\n{expiryText}", Severity.Success);
                     }
                 }
                 // --- SCENARIO B: SINGLE TICKET ---
                 else if (type == "Ticket")
                 {
-                    var ticket = await db.Set<FacilityTicket>()
-                        .Include(t => t.Product)
-                        .FirstOrDefaultAsync(t => t.Id == id);
-
-                    if (ticket == null)
-                    {
-                        lastResult = new ValidationResult("NOT FOUND", "Ticket record not in database.", Severity.Warning);
-                    }
-                    else if (ticket.IsUsed)
-                    {
-                        lastResult = new ValidationResult("ALREADY USED", $"Scanned at: {ticket.UsedAt:HH:mm}", Severity.Error);
-                    }
-                    else
+                    var ticket = await db.FacilityTickets.Include(t => t.Product).FirstOrDefaultAsync(t => t.Id == id);
+                    if (ticket != null && !ticket.IsUsed)
                     {
                         ticket.IsUsed = true;
                         ticket.UsedAt = DateTime.UtcNow;
                         await db.SaveChangesAsync();
-                        lastResult = new ValidationResult("ACCESS GRANTED", $"{ticket.Product?.Name ?? "Ticket"} Verified!", Severity.Success);
+                        lastResult = new ValidationResult("ACCESS GRANTED", $"{ticket.Product?.Name} Verified!", Severity.Success);
                     }
-                }
-                // --- SCENARIO C: MEMBERSHIP ---
-                else if (type == "Membership")
-                {
-                    var member = await db.Set<Membership>()
-                        .Include(m => m.User)
-                        .FirstOrDefaultAsync(m => m.Id == id);
-
-                    lastResult = member != null
-                        ? new ValidationResult("MEMBER VERIFIED", $"Welcome, {member.User?.UserName} ({member.Tier})", Severity.Success)
-                        : new ValidationResult("UNKNOWN MEMBER", "Membership ID not recognized.", Severity.Warning);
+                    else if (ticket != null && ticket.IsUsed)
+                    {
+                        lastResult = new ValidationResult("USED", $"Already used at {ticket.UsedAt:HH:mm}", Severity.Error);
+                    }
+                    else
+                    {
+                        lastResult = new ValidationResult("NOT FOUND", "Ticket invalid.", Severity.Warning);
+                    }
                 }
                 else
                 {
-                    lastResult = new ValidationResult("UNKNOWN TYPE", $"QR Type '{type}' is not supported.", Severity.Warning);
+                    lastResult = new ValidationResult("UNKNOWN TYPE", $"QR Type '{type}' not supported.", Severity.Warning);
                 }
             }
         }
@@ -236,46 +170,6 @@
 
         isProcessing = false;
         StateHasChanged();
-    }
-
-    // --- MANUAL SEARCH LOGIC ---
-    private string searchId = "";
-    private List<FacilityTicket>? searchResults;
-
-    private async Task HandleManualKeyDown(KeyboardEventArgs e)
-    {
-        if (e.Key == "Enter") await ManualSearch();
-    }
-
-    private async Task ManualSearch()
-    {
-        if (string.IsNullOrEmpty(searchId)) return;
-
-        using var db = await DbFactory.CreateDbContextAsync();
-        // Search by partial ID match (first 8 chars)
-        searchResults = await db.Set<FacilityTicket>()
-            .Include(t => t.Product)
-            .Where(t => t.Id.Contains(searchId))
-            .Take(5)
-            .ToListAsync();
-    }
-
-    private async Task MarkManually(FacilityTicket ticket)
-    {
-        bool? confirm = await DialogService.ShowMessageBox("Confirm", "Mark this ticket as USED?", yesText: "Yes", cancelText: "No");
-        if (confirm == true)
-        {
-            using var db = await DbFactory.CreateDbContextAsync();
-            var t = await db.Set<FacilityTicket>().FindAsync(ticket.Id);
-            if (t != null && !t.IsUsed)
-            {
-                t.IsUsed = true;
-                t.UsedAt = DateTime.UtcNow;
-                await db.SaveChangesAsync();
-                Snackbar.Add("Ticket Marked Used", Severity.Success);
-                await ManualSearch(); // Refresh list
-            }
-        }
     }
 
     private class ValidationResult

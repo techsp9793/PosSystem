@@ -1,0 +1,104 @@
+﻿@page "/admin/measurement-units"
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Data
+@using PosSystem.Data.Entities
+@using Microsoft.EntityFrameworkCore
+@using PosSystem.Permissions
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@attribute [Authorize(Policy = AppPermissions.Catalog.MeasurementUnits)]
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
+    <div class="d-flex justify-space-between align-center mb-4">
+        <MudText Typo="Typo.h5">Pricing Units</MudText>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="@(() => OpenDialog(null))">Add Unit</MudButton>
+    </div>
+
+    <MudTable Items="@Units" Hover="true" Elevation="4">
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>Symbol</MudTh>
+            <MudTh>Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Name">@context.Name</MudTd>
+            <MudTd DataLabel="Symbol">@context.Symbol</MudTd>
+            <MudTd>
+                @* --- EDIT BUTTON --- *@
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" OnClick="@(() => OpenDialog(context))" />
+
+                @* --- DELETE BUTTON --- *@
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="@(() => Delete(context))" />
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+</MudContainer>
+
+@code {
+    private List<MeasurementUnit> Units = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        Units = await db.MeasurementUnits.ToListAsync();
+    }
+
+    // Updated to handle Edit
+    private async Task OpenDialog(MeasurementUnit? existingUnit)
+    {
+        // 1. Prepare the Model (Clone if editing, New if adding)
+        var model = existingUnit == null
+            ? new MeasurementUnit()
+            : new MeasurementUnit
+            {
+                Id = existingUnit.Id,
+                Name = existingUnit.Name,
+                Symbol = existingUnit.Symbol,
+                TenantId = existingUnit.TenantId
+            };
+
+        var parameters = new DialogParameters { ["Model"] = model };
+        var title = existingUnit == null ? "Add Unit" : "Edit Unit";
+
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<MeasurementUnitDialog>(title, parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled && result.Data is MeasurementUnit savedUnit)
+        {
+            using var db = await DbFactory.CreateDbContextAsync();
+
+            if (existingUnit == null)
+            {
+                // Create New
+                db.MeasurementUnits.Add(savedUnit);
+            }
+            else
+            {
+                // Update Existing
+                db.MeasurementUnits.Update(savedUnit);
+            }
+
+            await db.SaveChangesAsync();
+            Snackbar.Add("Saved Successfully", Severity.Success);
+            await LoadData();
+        }
+    }
+
+    private async Task Delete(MeasurementUnit unit)
+    {
+        bool? confirm = await DialogService.ShowMessageBox("Confirm", $"Delete {unit.Name}?", yesText: "Delete", cancelText: "Cancel");
+        if (confirm == true)
+        {
+            using var db = await DbFactory.CreateDbContextAsync();
+            db.MeasurementUnits.Remove(unit);
+            await db.SaveChangesAsync();
+            await LoadData();
+        }
+    }
+}

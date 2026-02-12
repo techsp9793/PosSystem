@@ -1,0 +1,171 @@
+﻿@page "/admin/members/register"
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Data
+@using PosSystem.Data.Entities
+@using PosSystem.Permissions
+@using PosSystem.Services
+@using Microsoft.EntityFrameworkCore
+@attribute [Authorize(Policy = AppPermissions.Members.Register)]
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject QrCoreService QrService
+@inject IJSRuntime JS
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
+    <MudText Typo="Typo.h5" Class="mb-4">New Membership</MudText>
+
+    <MudGrid>
+        @* --- LEFT: REGISTRATION FORM --- *@
+        <MudItem xs="12" md="7">
+            <MudPaper Elevation="3" Class="pa-4">
+                <MudForm @ref="form" @bind-IsValid="@success">
+
+                    <MudTextField @bind-Value="NewMember.Name" Label="Member Name"
+                                  Required="true" RequiredError="Name is required!"
+                                  Variant="Variant.Outlined" Class="mb-3" />
+
+                    <div class="d-flex gap-4 mb-3">
+                        <MudTextField @bind-Value="NewMember.PhoneNumber" Label="Phone (Optional)"
+                                      Variant="Variant.Outlined" />
+
+                        <MudTextField @bind-Value="NewMember.Email" Label="Email (Optional)"
+                                      Variant="Variant.Outlined" />
+                    </div>
+
+                    <MudSelect T="int" Label="Duration" @bind-Value="DurationMonths" Variant="Variant.Outlined" Class="mb-3">
+                        <MudSelectItem Value="1">1 Month</MudSelectItem>
+                        <MudSelectItem Value="3">3 Months</MudSelectItem>
+                        <MudSelectItem Value="6">6 Months</MudSelectItem>
+                        <MudSelectItem Value="12">1 Year</MudSelectItem>
+                        <MudSelectItem Value="0">Lifetime (No Expiry)</MudSelectItem>
+                    </MudSelect>
+
+                    <MudDivider Class="my-3" />
+
+                    <div class="d-flex justify-space-between align-center mt-4">
+                        <MudText Typo="Typo.body2">
+                            <b>Expiry:</b> @(DurationMonths == 0 ? "Never" : CalculateExpiry().ToString("dd MMM yyyy"))
+                        </MudText>
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveMember" Disabled="@(!success)">
+                            Register & Print
+                        </MudButton>
+                    </div>
+
+                </MudForm>
+            </MudPaper>
+        </MudItem>
+
+        @* --- RIGHT: ID CARD PREVIEW --- *@
+        <MudItem xs="12" md="5">
+            @if (CreatedMember != null)
+            {
+                <div id="printable-card">
+                    <MudPaper Elevation="4" Class="pa-4 d-flex flex-column align-center justify-center"
+                              Style="background: #2c3e50; color: white; border-radius: 12px; min-height: 300px;">
+
+                        <MudText Typo="Typo.h6" Class="mb-1" Style="text-transform:uppercase; letter-spacing: 2px;">MEMBER</MudText>
+
+                        <div class="bg-white p-2 rounded mb-3 mt-2" style="padding: 10px; border-radius: 8px;">
+                            <img src="@QrImage" style="width: 140px; height: 140px;" />
+                        </div>
+
+                        <MudText Typo="Typo.h5" Style="font-weight:bold;">@CreatedMember.Name</MudText>
+                        <MudText Typo="Typo.caption" Style="opacity: 0.8;">@CreatedMember.MembershipType</MudText>
+
+                        <MudDivider Class="my-2" Style="width:100%; background:white; opacity: 0.3;" />
+
+                        <MudText Typo="Typo.body2">
+                            Valid Until:
+                            <b>@(CreatedMember.ExpiryDate.HasValue? CreatedMember.ExpiryDate.Value.ToString("dd MMM yyyy") : "Lifetime")</b>
+                        </MudText>
+                    </MudPaper>
+                </div>
+
+                <div class="d-flex justify-center mt-4 gap-2">
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Print" Color="Color.Primary" OnClick="PrintCard">
+                        Print
+                    </MudButton>
+                    <MudButton Variant="Variant.Text" OnClick="ResetForm">New</MudButton>
+                </div>
+            }
+            else
+            {
+                <div class="d-flex align-center justify-center h-100 border-2 border-dashed rounded pa-4 text-muted">
+                    Fill form to generate card
+                </div>
+            }
+        </MudItem>
+    </MudGrid>
+</MudContainer>
+
+<script>
+    function printCardElement() {
+        var content = document.getElementById('printable-card').innerHTML;
+        var win = window.open('', '', 'height=500,width=500');
+        win.document.write('<html><head><title>Print Card</title>');
+        win.document.write('</head><body style="display:flex; justify-content:center; align-items:center; height:100vh;">');
+        win.document.write(content);
+        win.document.write('</body></html>');
+        win.document.close();
+        win.print();
+    }
+</script>
+
+@code {
+    private Member NewMember = new();
+    private Member? CreatedMember;
+    private int DurationMonths = 1;
+    private string QrImage = "";
+    private bool success;
+    private MudForm form = default!;
+
+    private DateTime CalculateExpiry()
+    {
+        return DateTime.UtcNow.AddMonths(DurationMonths);
+    }
+
+    private async Task SaveMember()
+    {
+        await form.Validate();
+        if (!form.IsValid) return;
+
+        using var db = await DbFactory.CreateDbContextAsync();
+
+        // 1. Setup Member Data
+        NewMember.Id = Guid.NewGuid().ToString();
+        NewMember.JoinDate = DateTime.UtcNow;
+
+        if (DurationMonths > 0)
+            NewMember.ExpiryDate = CalculateExpiry();
+        else
+            NewMember.ExpiryDate = null; // Lifetime
+
+        NewMember.MembershipType = DurationMonths == 0 ? "Lifetime" : $"{DurationMonths} Month Plan";
+        NewMember.QrToken = Guid.NewGuid().ToString(); // Secure Token for QR
+
+        // 2. Save to DB
+        db.Members.Add(NewMember);
+        await db.SaveChangesAsync();
+
+        // 3. Generate QR (Payload: "Member|{QrToken}")
+        // Note: We use the Token, NOT the ID. This allows us to re-issue cards if stolen.
+        var securePayload = QrService.CreateSecureUrl("Member", NewMember.QrToken);
+        QrImage = QrService.GenerateQrImage(securePayload);
+
+        // 4. Update UI
+        CreatedMember = NewMember;
+        Snackbar.Add("Member Registered Successfully!", Severity.Success);
+    }
+
+    private void ResetForm()
+    {
+        NewMember = new Member();
+        CreatedMember = null;
+        DurationMonths = 1;
+    }
+
+    private async Task PrintCard()
+    {
+        await JS.InvokeVoidAsync("printCardElement");
+    }
+}

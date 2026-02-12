@@ -139,6 +139,17 @@ namespace PosSystem.Permissions
             public const string GenerateQr = "Permissions.Facilities.GenerateQr";
             public const string Gatekeeper = "Permissions.Facilities.Gatekeeper";
         }
+        public static class Members
+        {
+            public const string View = "Permissions.Members.View";
+            public const string Register = "Permissions.Members.Register";
+            public const string Edit = "Permissions.Members.Edit";
+            public const string Delete = "Permissions.Members.Delete";
+        }
+        public static class Catalog
+        {
+            public const string MeasurementUnits = "Permissions.Catalog.MeasurementUnits";
+        }
 
         // --- AUTO-DISCOVERY HELPER ---
         public static List<string> GetAllPermissions()

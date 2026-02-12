@@ -1,0 +1,36 @@
+﻿<MudDialog>
+    <DialogContent>
+        <div class="d-flex flex-column align-center justify-center pa-4 text-center" style="background: #2c3e50; color: white; border-radius: 8px;">
+            <MudText Typo="Typo.h5" Class="mb-2">@MemberName</MudText>
+
+            <div class="bg-white p-2 rounded mb-3">
+                <img src="@QrImage" style="width: 200px; height: 200px;" />
+            </div>
+
+            <MudText Typo="Typo.body2">Valid Until: <b>@Expiry</b></MudText>
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Close</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Print">Print</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@inject IJSRuntime JS
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public string MemberName { get; set; } = "";
+    [Parameter] public string QrImage { get; set; } = "";
+    [Parameter] public string Expiry { get; set; } = "";
+    [Parameter] public string ContentText { get; set; } = "";
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Print()
+    {
+        // Simple print trigger
+        await JS.InvokeVoidAsync("print");
+    }
+}

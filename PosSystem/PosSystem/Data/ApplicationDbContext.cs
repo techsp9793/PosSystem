@@ -35,7 +35,9 @@ namespace PosSystem.Data
         public DbSet<OrderItem> OrderItems { get; set; }
         public DbSet<StockMovement> StockMovements { get; set; }
         public DbSet<FacilityTicket> FacilityTickets { get; set; }
-        public DbSet<Membership> Memberships { get; set; }
+        public DbSet<Member> Members { get; set; }
+        public DbSet<MemberVisit> MemberVisits { get; set; }
+        public DbSet<MeasurementUnit> MeasurementUnits { get; set; }
         protected override void OnModelCreating(ModelBuilder builder)
         {
             base.OnModelCreating(builder);
@@ -77,8 +79,15 @@ namespace PosSystem.Data
             builder.Entity<FacilityTicket>().HasQueryFilter(e =>
                 GetIdInternal() == null || e.TenantId == GetIdInternal());
 
-            builder.Entity<Membership>().HasQueryFilter(e =>
-                GetIdInternal() == null || e.TenantId == GetIdInternal());
+            builder.Entity<Member>().HasIndex(m => m.QrToken).IsUnique();
+
+            // MeasurementUnit: Name unique per tenant
+            builder.Entity<MeasurementUnit>().HasIndex(u => new { u.TenantId, u.Name }).IsUnique();
+
+            // Multi-tenant Filters
+            builder.Entity<Member>().HasQueryFilter(e => GetIdInternal() == null || e.TenantId == GetIdInternal());
+            builder.Entity<MemberVisit>().HasQueryFilter(e => GetIdInternal() == null || e.TenantId == GetIdInternal());
+            builder.Entity<MeasurementUnit>().HasQueryFilter(e => GetIdInternal() == null || e.TenantId == GetIdInternal());
             // --- 3. SEEDING DEFAULT DATA ---
 
             // A. Seed Business Categories (Managed by Super Admin)

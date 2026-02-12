@@ -1,0 +1,125 @@
+﻿@using PosSystem.Services
+<MudDialog>
+    <DialogContent>
+        <MudGrid>
+            @* Top Section: Total Due *@
+            <MudItem xs="12" Class="text-center mb-2">
+                <MudText Typo="Typo.h5">Total Due</MudText>
+                <MudText Typo="Typo.h3" Color="Color.Primary"><b>@CurrencyHelper.Format(TotalDue)</b></MudText>
+            </MudItem>
+
+            @* Input Field *@
+            <MudItem xs="12">
+                <MudTextField @bind-Value="AmountTendered" Label="Cash Received" Variant="Variant.Outlined"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Money"
+                              Immediate="true" TextChanged="CalculateChange" AutoFocus="true"
+                              Class="mb-4" Style="font-size: 1.5rem;" />
+            </MudItem>
+
+            @* Quick Amount Buttons *@
+            <MudItem xs="12">
+                <div class="d-flex gap-2 justify-center flex-wrap mb-4">
+                    <MudChip T="string" OnClick="@(() => AddCash(100))" Variant="Variant.Outlined" Color="Color.Success" Clickable="true">+100</MudChip>
+                    <MudChip T="string" OnClick="@(() => AddCash(200))" Variant="Variant.Outlined" Color="Color.Success" Clickable="true">+200</MudChip>
+                    <MudChip T="string" OnClick="@(() => AddCash(500))" Variant="Variant.Outlined" Color="Color.Success" Clickable="true">+500</MudChip>
+                    <MudChip T="string" OnClick="@(() => AddCash(2000))" Variant="Variant.Outlined" Color="Color.Success" Clickable="true">+2000</MudChip>
+                    <MudChip T="string" OnClick="@(() => SetExact())" Variant="Variant.Filled" Color="Color.Primary" Clickable="true">Exact</MudChip>
+                </div>
+            </MudItem>
+
+            @* Change Calculation Display *@
+            @if (ChangeAmount > 0)
+            {
+                <MudItem xs="12" Class="pa-4 rounded border-2 mud-border-success" Style="background-color: rgba(0,200,0,0.05);">
+                    <MudText Typo="Typo.h6" Color="Color.Success" Align="Align.Center">Change to Return:</MudText>
+                    <MudText Typo="Typo.h3" Color="Color.Success" Align="Align.Center"><b>@CurrencyHelper.Format(ChangeAmount)</b></MudText>
+
+                    <MudDivider Class="my-2" />
+
+                    <MudText Typo="Typo.body2" Class="text-muted text-center">Suggested Breakdown:</MudText>
+                    <div class="d-flex justify-center gap-2 mt-2 flex-wrap">
+                        @foreach (var note in Breakdown)
+                        {
+                            <div class="d-flex flex-column align-center border px-2 py-1 bg-white rounded">
+                                <MudText Typo="Typo.caption" Style="font-weight:bold;">@note.Denomination</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">x @note.Count</MudText>
+                            </div>
+                        }
+                    </div>
+                </MudItem>
+            }
+            else if (AmountTendered > 0 && AmountTendered < TotalDue)
+            {
+                <MudItem xs="12">
+                    <MudAlert Severity="Severity.Error" Dense="true">
+                        Insufficient Amount! Need @CurrencyHelper.Format(TotalDue - AmountTendered) more.
+                    </MudAlert>
+                </MudItem>
+            }
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Success" Variant="Variant.Filled" OnClick="Submit"
+                   Disabled="@(AmountTendered < TotalDue)" Size="Size.Large"
+                   StartIcon="@Icons.Material.Filled.CheckCircle">
+            Complete Sale
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public decimal TotalDue { get; set; }
+
+    private decimal AmountTendered { get; set; }
+    private decimal ChangeAmount => Math.Max(0, AmountTendered - TotalDue);
+
+    private List<CashDenomination> Breakdown = new();
+
+    // Configurable Denominations
+    private readonly int[] Notes = { 2000, 500, 200, 100, 50, 20, 10, 5, 2, 1 };
+
+    private void AddCash(int amount)
+    {
+        AmountTendered += amount;
+        CalculateChange();
+    }
+
+    private void SetExact()
+    {
+        AmountTendered = TotalDue;
+        CalculateChange();
+    }
+
+    private void CalculateChange()
+    {
+        Breakdown.Clear();
+        if (ChangeAmount <= 0) return;
+
+        decimal remaining = ChangeAmount;
+
+        foreach (var note in Notes)
+        {
+            if (remaining >= note)
+            {
+                int count = (int)(remaining / note);
+                if (count > 0)
+                {
+                    Breakdown.Add(new CashDenomination { Denomination = note, Count = count });
+                    remaining -= (count * note);
+                }
+            }
+        }
+    }
+
+    private void Submit() => MudDialog.Close(DialogResult.Ok(AmountTendered));
+    private void Cancel() => MudDialog.Cancel();
+
+    public class CashDenomination
+    {
+        public int Denomination { get; set; }
+        public int Count { get; set; }
+    }
+}

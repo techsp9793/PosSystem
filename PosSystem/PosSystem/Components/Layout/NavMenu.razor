@@ -33,6 +33,8 @@
                     </Authorized>
                 </AuthorizeView>
             </MudNavGroup>
+
+            @* --- FACILITY MANAGEMENT --- *@
             <AuthorizeView Policy="@AppPermissions.Facilities.View">
                 <Authorized>
                     <MudNavGroup Title="Facility Management" Icon="@Icons.Material.Filled.QrCodeScanner" Expanded="false">
@@ -45,6 +47,7 @@
                     </MudNavGroup>
                 </Authorized>
             </AuthorizeView>
+
             @* --- CATALOG --- *@
             <MudNavGroup Title="Catalog" Icon="@Icons.Material.Filled.Category" Expanded="true">
                 <MudNavLink Href="/catalog/products" Icon="@Icons.Material.Filled.Inventory2">
@@ -53,6 +56,11 @@
 
                 <MudNavLink Href="/catalog/categories" Icon="@Icons.Material.Filled.Class">
                     @Terminology.GetText("Label_Category", "Categories")
+                </MudNavLink>
+
+                @* [NEW] MEASUREMENT UNITS LINK *@
+                <MudNavLink Href="/admin/measurement-units" Icon="@Icons.Material.Filled.Straighten">
+                    Pricing Units
                 </MudNavLink>
             </MudNavGroup>
 
@@ -80,7 +88,25 @@
                     <MudNavLink Href="/admin/tenants" Icon="@Icons.Material.Filled.Business">Tenants</MudNavLink>
                 </Authorized>
             </AuthorizeView>
+            @* --- MEMBER MANAGEMENT (New Section) --- *@
+            @* --- MEMBER MANAGEMENT --- *@
+            <AuthorizeView Policy="@AppPermissions.Members.View">
+                <Authorized>
+                    <MudNavGroup Title="Memberships" Icon="@Icons.Material.Filled.CardMembership" Expanded="true">
+                        @* Link to the LIST page *@
+                        <MudNavLink Href="/admin/members" Icon="@Icons.Material.Filled.PeopleAlt">
+                            Manage Members
+                        </MudNavLink>
 
+                        @* Optional: Keep direct link to Register if you want *@
+                        <AuthorizeView Policy="@AppPermissions.Members.Register" Context="regContext">
+                            <MudNavLink Href="/admin/members/register" Icon="@Icons.Material.Filled.PersonAdd">
+                                Register New
+                            </MudNavLink>
+                        </AuthorizeView>
+                    </MudNavGroup>
+                </Authorized>
+            </AuthorizeView>
             @* --- SUBSCRIPTION PLANS (Super Admin) --- *@
             <AuthorizeView Policy="@AppPermissions.Plans.View">
                 <Authorized>
@@ -115,6 +141,7 @@
                         <AuthorizeView Policy="@AppPermissions.Settings.General" Context="genSettingsContext">
                             <Authorized>
                                 <MudNavLink Href="/settings" Icon="@Icons.Material.Filled.Tune">System Settings</MudNavLink>
+                                <MudNavLink Href="/admin/settings/sms" Icon="@Icons.Material.Filled.Sms">SMS Gateway</MudNavLink>
                             </Authorized>
                         </AuthorizeView>
 
@@ -127,7 +154,7 @@
                             </Authorized>
                         </AuthorizeView>
 
-                        @* [NEW] PAYMENT GATEWAY SETTINGS *@
+                        @* PAYMENT GATEWAY SETTINGS *@
                         <AuthorizeView Policy="@AppPermissions.Settings.Payments" Context="paymentContext">
                             <Authorized>
                                 <MudNavLink Href="/admin/settings/payments" Icon="@Icons.Material.Filled.Payment">
@@ -139,7 +166,13 @@
                     </MudNavGroup>
                 </Authorized>
             </AuthorizeView>
-
+            <AuthorizeView Policy="@AppPermissions.Reports.View">
+                <Authorized>
+                    <MudNavLink Href="/admin/reports" Icon="@Icons.Material.Filled.Analytics">
+                        Reports & Analytics
+                    </MudNavLink>
+                </Authorized>
+            </AuthorizeView>
         </MudNavMenu>
     </div>
 
@@ -156,7 +189,7 @@
 </div>
 
 @* --- DEBUG INFO --- *@
-<div class="pa-4">
+@* <div class="pa-4">
     <MudAlert Severity="Severity.Info" Dense="true" Class="mb-2">Debug Security Info</MudAlert>
     <AuthorizeView>
         <Authorized>
@@ -171,7 +204,7 @@
             </div>
         </Authorized>
     </AuthorizeView>
-</div>
+</div> *@
 
 @code {
     private void HandleLogout()

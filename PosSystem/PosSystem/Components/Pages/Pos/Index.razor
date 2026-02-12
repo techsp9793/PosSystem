@@ -13,6 +13,7 @@
 @using Microsoft.AspNetCore.Components.Routing
 @using PosSystem.Components.Pages.Catalog.Products
 @using PosSystem.Components.Pages.Catalog.Categories
+@using Microsoft.AspNetCore.SignalR.Client
 
 @inject IDbContextFactory<LocalDbContext> LocalDbFactory
 @inject IDbContextFactory<ApplicationDbContext> CloudDbFactory
@@ -20,6 +21,8 @@
 @inject PosSystem.Services.StockService StockService
 @inject PosSystem.Services.ReceiptService ReceiptPrinter
 @inject PosSystem.Services.IPaymentService PaymentService
+@inject PosSystem.Services.QrCoreService QrService
+@inject PosSystem.Services.SmsService SmsService
 @inject NavigationManager Navigation
 
 @attribute [Authorize(Policy = "Permissions.Pos.Access")]
@@ -31,7 +34,7 @@
 @inject TerminologyService Terminology
 @inject UserManager<ApplicationUser> UserManager
 @inject AuthenticationStateProvider AuthStateProvider
-@using Microsoft.AspNetCore.SignalR.Client
+
 @implements IAsyncDisposable
 <PageTitle>POS - @(PosState.CurrentUnit?.Name)</PageTitle>
 
@@ -63,7 +66,7 @@
 }
 else if (!PosState.IsSessionValid)
 {
-    @* --- [NEW] STATE C: SESSION TAKEN OVER BY ANOTHER DEVICE --- *@
+    @* --- STATE C: SESSION TAKEN OVER BY ANOTHER DEVICE --- *@
     <MudContainer MaxWidth="MaxWidth.Small" Class="mt-16 text-center">
         <MudPaper Elevation="4" Class="pa-8 rounded-lg">
             <MudIcon Icon="@Icons.Material.Filled.DesktopAccessDisabled" Size="Size.Large" Color="Color.Error" Class="mb-4" />
@@ -71,8 +74,8 @@ else if (!PosState.IsSessionValid)
             <MudDivider Class="my-4" />
             <MudText Typo="Typo.body1">This account is currently active on another device or browser tab.</MudText>
             <MudText Typo="Typo.body2" Class="mt-2 text-muted">To protect your inventory and sales data, only one POS session can be active at a time.</MudText>
-            
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-8 py-3 px-8" 
+
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-8 py-3 px-8"
                        OnClick="@(() => Navigation.NavigateTo("/pos", true))">
                 RE-AUTHENTICATE THIS DEVICE
             </MudButton>
@@ -132,7 +135,7 @@ else
                     <div class="d-flex gap-2">
                         @* Opening Balance *@
                         <MudPaper Class="pa-2 cursor-pointer hover-effect flex-1 d-flex flex-column align-center justify-center border-1"
-                                  Elevation="0" Outlined="true" OnClick="SetOpeningBalance">
+                                  Elevation="0" Outlined="true" @onclick="SetOpeningBalance">
                             <MudText Typo="Typo.caption" Color="Color.Secondary" Style="font-size: 10px;">Opening</MudText>
                             <MudText Typo="Typo.subtitle2" Style="font-weight:700;">@DailyOpeningBalance.ToString("0.##")</MudText>
                         </MudPaper>
@@ -321,23 +324,189 @@ else
     </MudGrid>
 
     @* Payment Dialog *@
+    // <MudDialog @bind-Visible="isPaymentDialogVisible" Options="dialogOptions">
+    //     <DialogContent>
+    //         <MudText Typo="Typo.h5" Class="mb-4 text-center">Due: <b>@CurrencySymbol@CartTotal.ToString("N2")</b></MudText>
+
+    //         @if (showManualUpiInput)
+    //         {
+    //             @* --- [NEW] MANUAL UPI INPUT --- *@
+    //             <div class="d-flex flex-column gap-3 pa-2">
+    //                 <MudText Typo="Typo.body1">Enter UPI Transaction ID from Customer:</MudText>
+    //                 <MudTextField @bind-Value="manualTransactionId" Label="Transaction ID / Ref No" Variant="Variant.Outlined" AutoFocus="true" />
+    //                 <MudButton Variant="Variant.Filled" Color="Color.Success" OnClick="ConfirmManualUpi" Disabled="@string.IsNullOrWhiteSpace(manualTransactionId)">
+    //                     Confirm Payment
+    //                 </MudButton>
+    //                 <MudButton Variant="Variant.Text" OnClick="@(() => showManualUpiInput = false)">Back</MudButton>
+    //             </div>
+    //         }
+    //         else if (showSmsLinkInput)
+    //         {
+    //             @* --- [NEW] SEND SMS LINK INPUT --- *@
+    //             <div class="d-flex flex-column gap-3 pa-2">
+    //                 <MudText Typo="Typo.body1">Send Payment Link via SMS</MudText>
+    //                 <MudTextField @bind-Value="smsPhoneNumber" Label="Customer Mobile" Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Phone" />
+
+    //                 @if (isSendingLink)
+    //                 {
+    //                     <MudProgressLinear Color="Color.Info" Indeterminate="true" Class="my-2" />
+    //                 }
+    //                 else
+    //                 {
+    //                     <MudButton Variant="Variant.Filled" Color="Color.Info" OnClick="SendSmsLink" StartIcon="@Icons.Material.Filled.Send">
+    //                         Send Link
+    //                     </MudButton>
+    //                 }
+    //                 <MudButton Variant="Variant.Text" OnClick="@(() => showSmsLinkInput = false)">Back</MudButton>
+    //             </div>
+    //         }
+    //         else if (isListeningForWebhook)
+    //         {
+    //             @* --- STATE: LISTENING FOR WEBHOOK --- *@
+    //             <MudPaper Class="pa-4 border-2 mud-border-primary border-dashed d-flex flex-column align-center gap-3">
+
+    //                 @* Show Generated QR Code *@
+    //                 @if (!string.IsNullOrEmpty(QrImageBase64))
+    //                 {
+    //                     <img src="@QrImageBase64" width="200" height="200" style="border: 1px solid #ccc; border-radius: 8px;" />
+    //                 }
+    //                 else
+    //                 {
+    //                     <MudProgressCircular Indeterminate="true" Size="Size.Medium" Color="Color.Primary" />
+    //                 }
+
+    //                 <div class="d-flex align-center gap-2">
+    //                     <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Info" />
+    //                     <MudText Typo="Typo.h6" Color="Color.Primary">Listening for Payment...</MudText>
+    //                 </div>
+
+    //                 <MudText Typo="Typo.body2">Customer should scan the <b>Store QR Code</b> now.</MudText>
+
+    //                 <MudAlert Severity="Severity.Info" Dense="true" Class="mt-2">
+    //                     Waiting for exactly <b>@CurrencySymbol@CartTotal.ToString("N2")</b>
+    //                 </MudAlert>
+
+    //                 <MudButton Variant="Variant.Text" Color="Color.Secondary" Size="Size.Small" OnClick="CancelPaymentDialog">Cancel</MudButton>
+    //             </MudPaper>
+    //         }
+    //         else if (isProcessingPayment)
+    //         {
+    //             <div class="d-flex flex-column align-center py-4">
+    //                 <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+    //                 <MudText Class="mt-2">Processing...</MudText>
+    //             </div>
+    //         }
+    //         else
+    //         {
+    //             <MudGrid>
+    //                 <MudItem xs="6">
+    //                     <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-4 d-flex flex-column gap-1" OnClick="@(() => ProcessPayment("Cash"))">
+    //                         <MudIcon Icon="@Icons.Material.Filled.Money" Size="Size.Large" Color="Color.Success" />
+    //                         <MudText>CASH</MudText>
+    //                     </MudButton>
+    //                 </MudItem>
+
+    //                 @* [NEW] MANUAL UPI *@
+    //                 <MudItem xs="6">
+    //                     <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-4 d-flex flex-column gap-1" OnClick="@(() => showManualUpiInput = true)">
+    //                         <MudIcon Icon="@Icons.Material.Filled.Smartphone" Size="Size.Large" Color="Color.Warning" />
+    //                         <MudText>MANUAL UPI</MudText>
+    //                     </MudButton>
+    //                 </MudItem>
+
+    //                 <MudItem xs="6">
+    //                     <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-4 d-flex flex-column gap-1" OnClick="InitiateRazorpayPayment">
+    //                         <MudIcon Icon="@Icons.Material.Filled.Laptop" Size="Size.Large" Color="Color.Info" />
+    //                         <MudText>ONLINE</MudText>
+    //                     </MudButton>
+    //                 </MudItem>
+
+    //                 @* [NEW] SMS LINK *@
+    //                 <MudItem xs="6">
+    //                     <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-4 d-flex flex-column gap-1" OnClick="OpenSmsLinkOption">
+    //                         <MudIcon Icon="@Icons.Material.Filled.Sms" Size="Size.Large" Color="Color.Secondary" />
+    //                         <MudText>SEND LINK</MudText>
+    //                     </MudButton>
+    //                 </MudItem>
+
+    //                 @* --- BUTTON: VERIFY QR --- *@
+    //                 <MudItem xs="12">
+    //                     <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-3 d-flex flex-column gap-1" OnClick="StartWebhookListener">
+    //                         <MudIcon Icon="@Icons.Material.Filled.QrCodeScanner" Size="Size.Large" Color="Color.Primary" />
+    //                         <MudText>DISPLAY DYNAMIC QR</MudText>
+    //                     </MudButton>
+    //                 </MudItem>
+    //             </MudGrid>
+    //         }
+    //     </DialogContent>
+    //     <DialogActions>
+    //         <MudButton OnClick="CancelPaymentDialog" Disabled="@isProcessingPayment">Cancel</MudButton>
+    //     </DialogActions>
+    // </MudDialog>
+
+    @* Payment Dialog *@
     <MudDialog @bind-Visible="isPaymentDialogVisible" Options="dialogOptions">
         <DialogContent>
             <MudText Typo="Typo.h5" Class="mb-4 text-center">Due: <b>@CurrencySymbol@CartTotal.ToString("N2")</b></MudText>
 
-            @if (isListeningForWebhook)
+            @if (showManualUpiInput)
             {
-                @* --- STATE: LISTENING FOR WEBHOOK --- *@
+                @* --- MANUAL UPI INPUT --- *@
+                <div class="d-flex flex-column gap-3 pa-2">
+                    <MudText Typo="Typo.body1">Enter UPI Transaction ID from Customer:</MudText>
+                    <MudTextField @bind-Value="manualTransactionId" Label="Transaction ID / Ref No" Variant="Variant.Outlined" AutoFocus="true" />
+                    <MudButton Variant="Variant.Filled" Color="Color.Success" OnClick="ConfirmManualUpi" Disabled="@string.IsNullOrWhiteSpace(manualTransactionId)">
+                        Confirm Payment
+                    </MudButton>
+                    <MudButton Variant="Variant.Text" OnClick="@(() => showManualUpiInput = false)">Back</MudButton>
+                </div>
+            }
+            @* else if (showSmsLinkInput)
+            {
+                <div class="d-flex flex-column gap-3 pa-2">
+                    <MudText Typo="Typo.body1">Send Payment Link via SMS</MudText>
+                    <MudTextField @bind-Value="smsPhoneNumber" Label="Customer Mobile" Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Phone" />
+
+                    @if (isSendingLink)
+                    {
+                        <MudProgressLinear Color="Color.Info" Indeterminate="true" Class="my-2" />
+                    }
+                    else
+                    {
+                        <MudButton Variant="Variant.Filled" Color="Color.Info" OnClick="SendSmsLink" StartIcon="@Icons.Material.Filled.Send">
+                            Send Link
+                        </MudButton>
+                    }
+                    <MudButton Variant="Variant.Text" OnClick="@(() => showSmsLinkInput = false)">Back</MudButton>
+                </div>
+            }
+            else if (isListeningForWebhook)
+            {
                 <MudPaper Class="pa-4 border-2 mud-border-primary border-dashed d-flex flex-column align-center gap-3">
-                    <MudProgressCircular Indeterminate="true" Size="Size.Medium" Color="Color.Primary" />
-                    <MudText Typo="Typo.h6" Color="Color.Primary">Listening for Payment...</MudText>
+                    @if (!string.IsNullOrEmpty(QrImageBase64))
+                    {
+                        <img src="@QrImageBase64" width="200" height="200" style="border: 1px solid #ccc; border-radius: 8px;" />
+                    }
+                    else
+                    {
+                        <MudProgressCircular Indeterminate="true" Size="Size.Medium" Color="Color.Primary" />
+                    }
+
+                    <div class="d-flex align-center gap-2">
+                        <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Info" />
+                        <MudText Typo="Typo.h6" Color="Color.Primary">Listening for Payment...</MudText>
+                    </div>
+
                     <MudText Typo="Typo.body2">Customer should scan the <b>Store QR Code</b> now.</MudText>
 
                     <MudAlert Severity="Severity.Info" Dense="true" Class="mt-2">
                         Waiting for exactly <b>@CurrencySymbol@CartTotal.ToString("N2")</b>
                     </MudAlert>
+                    
+                    <MudButton Variant="Variant.Text" Color="Color.Secondary" Size="Size.Small" OnClick="CancelPaymentDialog">Cancel</MudButton>
                 </MudPaper>
             }
+            *@
             else if (isProcessingPayment)
             {
                 <div class="d-flex flex-column align-center py-4">
@@ -348,26 +517,43 @@ else
             else
             {
                 <MudGrid>
-                    <MudItem xs="4">
-                        <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-6 d-flex flex-column gap-2" OnClick="@(() => ProcessPayment("Cash"))">
+                    <MudItem xs="6">
+                        <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-4 d-flex flex-column gap-1" OnClick="@(() => InitiateCashPayment())">
                             <MudIcon Icon="@Icons.Material.Filled.Money" Size="Size.Large" Color="Color.Success" />
                             <MudText>CASH</MudText>
                         </MudButton>
                     </MudItem>
-                    <MudItem xs="4">
-                        <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-6 d-flex flex-column gap-2" OnClick="InitiateRazorpayPayment">
+
+                    @* MANUAL UPI *@
+                    <MudItem xs="6">
+                        <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-4 d-flex flex-column gap-1" OnClick="@(() => showManualUpiInput = true)">
+                            <MudIcon Icon="@Icons.Material.Filled.Smartphone" Size="Size.Large" Color="Color.Warning" />
+                            <MudText>MANUAL UPI</MudText>
+                        </MudButton>
+                    </MudItem>
+
+                    @* --- DISABLED FOR NOW ---
+                    <MudItem xs="6">
+                        <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-4 d-flex flex-column gap-1" OnClick="InitiateRazorpayPayment">
                             <MudIcon Icon="@Icons.Material.Filled.Laptop" Size="Size.Large" Color="Color.Info" />
                             <MudText>ONLINE</MudText>
                         </MudButton>
                     </MudItem>
 
-                    @* --- BUTTON: VERIFY QR --- *@
-                    <MudItem xs="4">
-                        <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-6 d-flex flex-column gap-2" OnClick="StartWebhookListener">
-                            <MudIcon Icon="@Icons.Material.Filled.QrCodeScanner" Size="Size.Large" Color="Color.Primary" />
-                            <MudText>VERIFY QR</MudText>
+                    <MudItem xs="6">
+                        <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-4 d-flex flex-column gap-1" OnClick="OpenSmsLinkOption">
+                            <MudIcon Icon="@Icons.Material.Filled.Sms" Size="Size.Large" Color="Color.Secondary" />
+                            <MudText>SEND LINK</MudText>
                         </MudButton>
                     </MudItem>
+
+                    <MudItem xs="12">
+                        <MudButton Variant="Variant.Outlined" FullWidth="true" Class="py-3 d-flex flex-column gap-1" OnClick="StartWebhookListener">
+                            <MudIcon Icon="@Icons.Material.Filled.QrCodeScanner" Size="Size.Large" Color="Color.Primary" />
+                            <MudText>DISPLAY DYNAMIC QR</MudText>
+                        </MudButton>
+                    </MudItem>
+                    *@
                 </MudGrid>
             }
         </DialogContent>
@@ -375,7 +561,7 @@ else
             <MudButton OnClick="CancelPaymentDialog" Disabled="@isProcessingPayment">Cancel</MudButton>
         </DialogActions>
     </MudDialog>
-    
+
     @* Customer Dialog *@
     <MudDialog @bind-Visible="isCustomerDialogVisible">
         <DialogContent>
@@ -410,16 +596,6 @@ else
     .border-bottom-dashed {
         border-bottom: 1px dashed var(--mud-palette-lines-default);
     }
-
-    .animate-fade {
-        animation: fadeout 3s forwards;
-    }
-
-    @@keyframes fadeout {
-        0% { opacity: 1; }
-        70% { opacity: 1; }
-        100% { opacity: 0; display: none; }
-    }
 </style>
 
 @code {
@@ -449,6 +625,13 @@ else
     private bool isPaymentDialogVisible = false;
     private bool isProcessingPayment = false;
 
+    // [NEW] Flags and vars for new payment methods
+    private bool showManualUpiInput = false;
+    private string manualTransactionId = "";
+    private bool showSmsLinkInput = false;
+    private string smsPhoneNumber = "";
+    private bool isSendingLink = false;
+
     private Dictionary<string, int> ProductStock = new();
     private DialogOptions dialogOptions = new() { MaxWidth = MaxWidth.Small, FullWidth = true };
     private decimal CartTotal => CartItems.Sum(i => i.Quantity * i.UnitPrice);
@@ -461,8 +644,11 @@ else
     private decimal DailyOpeningBalance = 0;
     private decimal DailyTotalSales = 0;
     private decimal DailyCashSales = 0;
-    private bool canCreateProduct = false;
-    private bool canCreateCategory = false;
+
+    // Variables for SignalR Payment
+    private string CurrentPaymentGroupId = "";
+    private string QrImageBase64 = "";
+
     protected override async Task OnInitializedAsync()
     {
         objRef = DotNetObjectReference.Create(this);
@@ -472,32 +658,57 @@ else
         AvailableUnits = (await safeUow.Units.GetAllAsync()).ToList();
 
         CurrencySymbol = Terminology.GetText("CurrencySymbol", "$");
-        // PosState.OnChange += StateHasChanged;
         PosState.OnChange += () => InvokeAsync(StateHasChanged);
         await CheckForAutoLogin();
 
-        // [POLLER] Every 5 seconds: Sync status + Session Concurrency Check
+        // Poller for Sync + Session Check
+        // _syncTimer = new System.Threading.Timer(async _ =>
+        // {
+        //     await UpdateSyncStatus();
+        //     if (PosState.IsUnitSelected)
+        //     {
+        //         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        //         var user = await UserManager.GetUserAsync(authState.User);
+        //         if (user != null)
+        //         {
+        //             await PosState.ValidateSessionAsync(user.Id, LocalDbFactory, takeControl: false);
+        //         }
+        //     }
+        //     await InvokeAsync(StateHasChanged);
+        // }, null, 3000, 5000);
+        // [UPDATED] Smarter Poller
         _syncTimer = new System.Threading.Timer(async _ =>
         {
-            // 1. Update Sync Count
+            // 1. Capture current state
+            int oldCount = SyncQueueCount;
+            bool oldSessionValid = PosState.IsSessionValid;
+
+            // 2. Perform Checks
             await UpdateSyncStatus();
+
             if (PosState.IsUnitSelected)
             {
-                // 2. [NEW] Check if another session took over
                 var authState = await AuthStateProvider.GetAuthenticationStateAsync();
                 var user = await UserManager.GetUserAsync(authState.User);
                 if (user != null)
                 {
-                    // await PosState.ValidateSessionAsync(user.Id, LocalDbFactory);
+                    // Pass 'false' so we just check without taking control
                     await PosState.ValidateSessionAsync(user.Id, LocalDbFactory, takeControl: false);
                 }
             }
-            await InvokeAsync(StateHasChanged);
+
+            // 3. [FIX] Only update UI if something actually changed
+            if (SyncQueueCount != oldCount || PosState.IsSessionValid != oldSessionValid)
+            {
+                await InvokeAsync(StateHasChanged);
+            }
+
         }, null, 3000, 5000);
 
         await LoadDailyStats();
         isLoading = false;
 
+        // SignalR Connection setup to listen for "PAID" status
         try
         {
             hubConnection = new HubConnectionBuilder()
@@ -505,18 +716,30 @@ else
                 .WithAutomaticReconnect()
                 .Build();
 
+            hubConnection.On<string>("ReceivePaymentConfirmation", async (status) =>
+            {
+                if (status == "PAID" && isListeningForWebhook && isPaymentDialogVisible)
+                {
+                    await InvokeAsync(async () =>
+                    {
+                        Snackbar.Add("Payment Confirmed via Webhook!", Severity.Success);
+                        // Save Order immediately
+                        await ProcessPayment("Online (QR Webhook)", CurrentPaymentGroupId);
+                    });
+                }
+            });
+
+            // Keep the old listener just in case you use standard Razorpay checkout
             hubConnection.On<decimal, string, string>("PaymentVerified", async (amount, paymentId, payerContact) =>
             {
-                if (isListeningForWebhook && isPaymentDialogVisible)
+                // This is for the "Online" button popup flow
+                if (isProcessingPayment && isPaymentDialogVisible && amount == CartTotal)
                 {
-                    if (amount == CartTotal)
+                    await InvokeAsync(async () =>
                     {
-                        await InvokeAsync(async () =>
-                        {
-                            Snackbar.Add($"Received {CurrencySymbol}{amount} from {payerContact}", Severity.Success);
-                            await ProcessPayment("UPI (QR Webhook)", paymentId);
-                        });
-                    }
+                        Snackbar.Add($"Received {CurrencySymbol}{amount}", Severity.Success);
+                        await ProcessPayment("UPI (Gateway)", paymentId);
+                    });
                 }
             });
 
@@ -536,13 +759,9 @@ else
             int currentCount = await localDb.Orders.CountAsync(o => !o.IsSynced);
 
             if (currentCount == 0 && _lastSyncCount > 0)
-            {
                 ShowSyncComplete = true;
-            }
             else if (currentCount > 0)
-            {
                 ShowSyncComplete = false;
-            }
 
             SyncQueueCount = currentCount;
             _lastSyncCount = currentCount;
@@ -554,15 +773,14 @@ else
     {
         if (ParkedOrders.Any()) { }
     }
+
     private async Task CheckForAutoLogin()
     {
-        // Get user info first (needed for session validation)
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         var user = await UserManager.GetUserAsync(authState.User);
 
         if (PosState.IsUnitSelected && PosState.CurrentUnit != null)
         {
-            // Unit was already selected in MainLayout - validate session immediately
             if (user != null)
             {
                 await PosState.ValidateSessionAsync(user.Id, LocalDbFactory, takeControl: true);
@@ -571,7 +789,6 @@ else
             return;
         }
 
-        // No unit selected - try to auto-select from user's default
         try
         {
             if (user != null && !string.IsNullOrEmpty(user.DefaultUnitId))
@@ -583,27 +800,18 @@ else
         catch (Exception ex) { Console.WriteLine("Auto-login error: " + ex.Message); }
     }
 
-   
     private async Task SelectUnit(Unit unit)
     {
         try
         {
             isLoading = true;
-
-            // 1. Set the unit locally (This enables the UI)
             PosState.SetUnit(unit);
-
-            // 2. [CRITICAL FIX] Claim the session IMMEDIATELY (Before loading data)
-            // We do this FIRST so the background timer sees the correct ID instantly.
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var user = await UserManager.GetUserAsync(authState.User);
             if (user != null)
             {
-                // Pass 'true' to OVERWRITE the DB (Last Login Wins)
                 await PosState.ValidateSessionAsync(user.Id, LocalDbFactory, takeControl: true);
             }
-
-            // 3. NOW load the heavy data (Products, Categories, etc.)
             await LoadPosData(unit);
         }
         catch (Exception ex)
@@ -616,25 +824,6 @@ else
             isLoading = false;
         }
     }
-    // private async Task SelectUnit(Unit unit)
-    // {
-    //     try 
-    //     { 
-    //         isLoading = true; 
-    //         PosState.SetUnit(unit); 
-    //         await LoadPosData(unit); 
-            
-    //         // [NEW] Immediately register session as active for this user
-    //         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-    //         var user = await UserManager.GetUserAsync(authState.User);
-    //         if (user != null)
-    //         {
-    //             await PosState.ValidateSessionAsync(user.Id, LocalDbFactory);
-    //         }
-    //     }
-    //     catch (Exception ex) { Snackbar.Add("Error loading unit.", Severity.Error); }
-    //     finally { isLoading = false; }
-    // }
 
     private async Task LoadPosData(Unit unit)
     {
@@ -739,17 +928,124 @@ else
         DialogService.Show<RecentOrdersDialog>("Recent Orders", parameters, new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
     }
 
-    private void StartWebhookListener()
+    // --- MANUAL UPI LOGIC ---
+    private async Task ConfirmManualUpi()
     {
-        isListeningForWebhook = true;
-        StateHasChanged();
+        if (string.IsNullOrWhiteSpace(manualTransactionId)) return;
+
+        // Process as a completed payment immediately
+        await ProcessPayment("UPI (Manual)", manualTransactionId);
+
+        // Reset UI
+        showManualUpiInput = false;
+        manualTransactionId = "";
     }
 
-    private void CancelPaymentDialog()
+    // --- SMS LINK LOGIC ---
+    private void OpenSmsLinkOption()
     {
+        // Prefill phone if customer is selected
+        smsPhoneNumber = CurrentCustomerPhone ?? "";
+        showSmsLinkInput = true;
+    }
+
+    private async Task SendSmsLink()
+    {
+        if (string.IsNullOrWhiteSpace(smsPhoneNumber))
+        {
+            Snackbar.Add("Phone number required", Severity.Warning);
+            return;
+        }
+
+        isSendingLink = true;
+        try
+        {
+            // 1. Create Order ID/Link (Using Razorpay logic or just Order ID)
+            var receiptId = $"LNK-{DateTime.Now.Ticks}";
+            // In a real scenario, you might call Razorpay to generate a specific "Payment Link" URL
+            // For now, we will create a dummy link for testing
+            string dummyLink = $"https://pay.razorpay.com/{receiptId}";
+
+            // 2. Send SMS
+            bool sent = await SmsService.SendPaymentLinkAsync(smsPhoneNumber, CartTotal, dummyLink);
+
+            if (sent)
+            {
+                Snackbar.Add($"Link sent to {smsPhoneNumber}", Severity.Success);
+                showSmsLinkInput = false;
+            }
+            else
+            {
+                Snackbar.Add("Failed to send SMS. Check settings.", Severity.Error);
+            }
+        }
+        finally
+        {
+            isSendingLink = false;
+        }
+    }
+
+    // This starts the process to listen for the Webhook
+    private async Task StartWebhookListener()
+    {
+        try
+        {
+            isProcessingPayment = true;
+            StateHasChanged();
+
+            // 1. Create a Razorpay Order ID
+            var receiptId = $"RCPT-{DateTime.Now.Ticks}";
+            var rzOrderId = await PaymentService.CreateOrderAsync(CartTotal, receiptId);
+
+            if (string.IsNullOrEmpty(rzOrderId))
+            {
+                Snackbar.Add("Failed to generate Order ID from Payment Gateway", Severity.Error);
+                isProcessingPayment = false;
+                return;
+            }
+
+            CurrentPaymentGroupId = rzOrderId;
+
+            // 2. Generate UPI QR Link
+            // Replace 'techspruce@icici' with your VPA or business VPA
+            string upiLink = $"upi://pay?pa=techspruce@icici&pn={PosState.CurrentUnit?.Name ?? "Store"}&tr={rzOrderId}&am={CartTotal}&cu=INR";
+
+            // Generate QR Image
+            QrImageBase64 = QrService.GenerateQrImage(upiLink);
+
+            // 3. Join SignalR Group
+            if (hubConnection is not null)
+            {
+                await hubConnection.SendAsync("JoinOrderGroup", CurrentPaymentGroupId);
+            }
+
+            isProcessingPayment = false;
+            isListeningForWebhook = true;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            isProcessingPayment = false;
+            Snackbar.Add("Error starting listener: " + ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task CancelPaymentDialog()
+    {
+        // [IMPORTANT] Leave group if cancelling
+        if (hubConnection is not null && !string.IsNullOrEmpty(CurrentPaymentGroupId))
+        {
+            await hubConnection.SendAsync("LeaveOrderGroup", CurrentPaymentGroupId);
+        }
+
+        // Reset all states
         isListeningForWebhook = false;
         isPaymentDialogVisible = false;
         isProcessingPayment = false;
+        showManualUpiInput = false;
+        showSmsLinkInput = false;
+        CurrentPaymentGroupId = "";
+        QrImageBase64 = "";
     }
 
     private async Task LoadDailyStats()
@@ -767,25 +1063,33 @@ else
             DailyCashSales = todayOrders.Where(o => o.PaymentMethod == "Cash").Sum(o => o.TotalAmount);
 
             string key = $"OpeningBalance_{DateTime.Now:yyyy-MM-dd}";
-            // var setting = await localDb.SystemSettings.FirstOrDefaultAsync(s => s.Key == key);
             var setting = await localDb.SystemSettings
-    .FirstOrDefaultAsync(s => s.Key == key && s.TenantId == PosState.CurrentUnit.TenantId);
+                .FirstOrDefaultAsync(s => s.Key == key && s.TenantId == PosState.CurrentUnit.TenantId);
+
             if (setting != null && decimal.TryParse(setting.Value, out decimal val))
-            {
                 DailyOpeningBalance = val;
-            }
             else
-            {
                 DailyOpeningBalance = 0;
-            }
         }
         catch (Exception ex) { Console.WriteLine("Stats Error: " + ex.Message); }
     }
 
     private async Task SetOpeningBalance()
     {
-        string input = await JS.InvokeAsync<string>("prompt", "Enter Opening Cash Amount:", DailyOpeningBalance.ToString());
-        if (!string.IsNullOrEmpty(input) && decimal.TryParse(input, out decimal newBalance))
+        // OLD WAY: string input = await JS.InvokeAsync<string>("prompt", ...);
+
+        // NEW WAY: Professional Dialog
+        var parameters = new DialogParameters
+        {
+            ["Amount"] = DailyOpeningBalance
+        };
+
+        var dialog = DialogService.Show<OpeningBalanceDialog>("Opening Balance", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true });
+
+        var result = await dialog.Result;
+
+        if (!result.Canceled && result.Data is decimal newBalance)
         {
             await SaveOpeningBalance(newBalance);
         }
@@ -830,7 +1134,7 @@ else
             var keyId = await PaymentService.GetPublicKeyAsync();
             if (string.IsNullOrEmpty(keyId))
             {
-                Snackbar.Add("Online Payment not configured. Contact Admin.", Severity.Error);
+                Snackbar.Add("Online Payment not configured.", Severity.Error);
                 isProcessingPayment = false;
                 return;
             }
@@ -858,25 +1162,24 @@ else
     [JSInvokable]
     public async Task OnRazorpaySuccess(string rzpOrderId, string rzpPaymentId, string rzpSignature)
     {
-        Snackbar.Add("Payment received from Razorpay. Verifying...", Severity.Info);
+        Snackbar.Add("Payment received. Verifying...", Severity.Info);
         try
         {
             bool isValid = await PaymentService.VerifyPaymentSignature(rzpOrderId, rzpPaymentId, rzpSignature);
             if (isValid)
             {
-                Snackbar.Add("Signature Valid! Saving Order...", Severity.Success);
                 await InvokeAsync(async () => { await ProcessPayment("Online (Razorpay)", rzpPaymentId); });
             }
             else
             {
-                Snackbar.Add("SECURITY ALERT: Payment Signature Invalid! Order not saved.", Severity.Error);
+                Snackbar.Add("SECURITY ALERT: Signature Invalid!", Severity.Error);
                 isProcessingPayment = false;
                 await InvokeAsync(StateHasChanged);
             }
         }
         catch (Exception ex)
         {
-            Snackbar.Add($"CRITICAL ERROR in Callback: {ex.Message}", Severity.Error);
+            Snackbar.Add($"Error in Callback: {ex.Message}", Severity.Error);
             isProcessingPayment = false;
             await InvokeAsync(StateHasChanged);
         }
@@ -884,9 +1187,13 @@ else
 
     private async Task ProcessPayment(string method, string? referenceId = null)
     {
+        // Clear flags
         isPaymentDialogVisible = false;
         isProcessingPayment = false;
         isListeningForWebhook = false;
+        showManualUpiInput = false;
+        showSmsLinkInput = false;
+
         Snackbar.Add("Processing Transaction...", Severity.Info);
         try
         {
@@ -979,12 +1286,63 @@ else
             StateHasChanged();
         }
     }
+    // 1. Opens the Change Calculator Dialog
+    private async Task InitiateCashPayment()
+    {
+        // Pass the Total Due to the dialog
+        var parameters = new DialogParameters
+        {
+            ["TotalDue"] = CartTotal
+        };
+
+        var dialog = DialogService.Show<CashPaymentDialog>("Cash Payment", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+
+        var result = await dialog.Result;
+
+        // If user clicked "Complete Sale"
+        if (!result.Canceled && result.Data is decimal tendered)
+        {
+            // Trigger Hardware Drawer
+            await OpenCashDrawer();
+
+            // Proceed to save the order
+            await ProcessPayment("Cash");
+        }
+    }
+
+    // 2. Hardware Trigger (Placeholder for now)
+    private async Task OpenCashDrawer()
+    {
+        try
+        {
+            // TODO: Later, fetch this from SystemSettingsService
+            string printerName = "EPSON TM-T82"; // <--- CHANGE THIS to your exact Windows Printer Name
+
+            await JS.InvokeVoidAsync("qzInterop.openDrawer", printerName);
+
+            Snackbar.Add("Cash Drawer Opened", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            // Usually fails if QZ Tray isn't running or printer name is wrong
+            Snackbar.Add($"Drawer Error: Is QZ Tray running?", Severity.Warning);
+            Console.WriteLine(ex.Message);
+        }
+    }
     public async ValueTask DisposeAsync()
     {
         objRef?.Dispose();
         PosState.OnChange -= StateHasChanged;
         _syncTimer?.Dispose();
-        if (hubConnection is not null) { await hubConnection.DisposeAsync(); }
+        if (hubConnection is not null)
+        {
+            if (!string.IsNullOrEmpty(CurrentPaymentGroupId))
+            {
+                await hubConnection.SendAsync("LeaveOrderGroup", CurrentPaymentGroupId);
+            }
+            await hubConnection.DisposeAsync();
+        }
     }
 
     public class CartItem

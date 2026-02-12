@@ -1,0 +1,72 @@
+﻿@page "/admin/settings/sms"
+@using PosSystem.Services
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+
+@inject SmsService SmsService
+@inject ISnackbar Snackbar
+
+@attribute [Authorize(Policy = "Permissions.Settings.General")]
+
+<PageTitle>SMS Gateway Settings</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
+    <MudText Typo="Typo.h5" Class="mb-4"><b>SMS Gateway Configuration</b></MudText>
+
+    <MudPaper Class="pa-6">
+        <MudGrid>
+            <MudItem xs="12">
+                <MudSelect T="string" Label="Provider" @bind-Value="Provider" Variant="Variant.Outlined">
+                    <MudSelectItem Value="@("Generic")">Generic API (GET/POST)</MudSelectItem>
+                    <MudSelectItem Value="@("Twilio")">Twilio</MudSelectItem>
+                    <MudSelectItem Value="@("Fast2SMS")">Fast2SMS</MudSelectItem>
+                    <MudSelectItem Value="@("TextLocal")">TextLocal</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12">
+                <MudTextField @bind-Value="ApiUrl" Label="API URL" HelperText="e.g. https://api.textlocal.in/send/..." Variant="Variant.Outlined" />
+            </MudItem>
+
+            <MudItem xs="12" sm="6">
+                <MudTextField @bind-Value="ApiKey" Label="API Key / Token" Variant="Variant.Outlined" InputType="InputType.Password" />
+            </MudItem>
+
+            <MudItem xs="12" sm="6">
+                <MudTextField @bind-Value="SenderId" Label="Sender ID" HelperText="e.g. TXTLCL" Variant="Variant.Outlined" />
+            </MudItem>
+
+            <MudItem xs="12" Class="d-flex justify-end mt-4">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveSettings" StartIcon="@Icons.Material.Filled.Save">
+                    Save Configuration
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudAlert Severity="Severity.Info" Class="mt-4">
+        <b>Note:</b> These settings are used when you click "Send Link" in the POS payment dialog.
+    </MudAlert>
+</MudContainer>
+
+@code {
+    private string Provider = "Generic";
+    private string ApiUrl = "";
+    private string ApiKey = "";
+    private string SenderId = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var config = await SmsService.GetConfigAsync();
+        Provider = config.Provider;
+        ApiUrl = config.Url;
+        ApiKey = config.Key;
+        SenderId = config.Sender;
+    }
+
+    private async Task SaveSettings()
+    {
+        await SmsService.SaveConfigAsync(Provider, ApiUrl, ApiKey, SenderId);
+        Snackbar.Add("SMS Settings Saved Successfully", Severity.Success);
+    }
+}

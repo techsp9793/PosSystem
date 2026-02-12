@@ -129,6 +129,42 @@ namespace PosSystem.Migrations.LocalDb
                     b.ToTable("OrderItems");
                 });
 
+            modelBuilder.Entity("PosSystem.Data.Entities.SystemSetting", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastModifiedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastModifiedBy")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TenantId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("SystemSettings");
+                });
+
             modelBuilder.Entity("PosSystem.Data.Entities.OrderItem", b =>
                 {
                     b.HasOne("PosSystem.Data.Entities.Order", "Order")

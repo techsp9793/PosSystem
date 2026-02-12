@@ -1,0 +1,183 @@
+﻿@page "/admin/members"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PosSystem.Data
+@using PosSystem.Data.Entities
+@using PosSystem.Permissions
+@using PosSystem.Services
+
+@attribute [Authorize(Policy = AppPermissions.Members.View)]
+
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+@inject QrCoreService QrService
+@inject IJSRuntime JS
+
+<PageTitle>Member List</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <div class="d-flex justify-space-between align-center mb-4">
+        <MudText Typo="Typo.h5"><b>Membership Management</b></MudText>
+
+        <AuthorizeView Policy="@AppPermissions.Members.Register">
+            <Authorized>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PersonAdd"
+                           OnClick="@(() => Navigation.NavigateTo("/admin/members/register"))">
+                    New Member
+                </MudButton>
+            </Authorized>
+        </AuthorizeView>
+    </div>
+
+    <MudTable Items="@Members" Dense="true" Hover="true" Bordered="true" Striped="true" Filter="new Func<Member, bool>(FilterFunc)">
+        <ToolBarContent>
+            <MudText Typo="Typo.h6">All Members</MudText>
+            <MudSpacer />
+            <MudTextField @bind-Value="searchString" Placeholder="Search Name or Phone..." Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Medium" Class="mt-0" />
+        </ToolBarContent>
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>Type</MudTh>
+            <MudTh>Join Date</MudTh>
+            <MudTh>Expiry Date</MudTh>
+            <MudTh>Status</MudTh>
+            <MudTh>Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Name">
+                <div class="d-flex flex-column">
+                    <MudText Typo="Typo.body2"><b>@context.Name</b></MudText>
+                    @if (!string.IsNullOrEmpty(context.PhoneNumber))
+                    {
+                        <MudText Typo="Typo.caption">@context.PhoneNumber</MudText>
+                    }
+                </div>
+            </MudTd>
+            <MudTd DataLabel="Type">@context.MembershipType</MudTd>
+            <MudTd DataLabel="Join Date">@context.JoinDate.ToString("dd MMM yyyy")</MudTd>
+            <MudTd DataLabel="Expiry">
+                @if (context.ExpiryDate.HasValue)
+                {
+                    if (context.ExpiryDate.Value < DateTime.UtcNow)
+                    {
+                        <MudChip T="string" Color="Color.Error" Size="Size.Small">Expired</MudChip>
+                        <br />
+                        <MudText Typo="Typo.caption">@context.ExpiryDate.Value.ToString("dd MMM yyyy")</MudText>
+                    }
+                    else
+                    {
+                        <MudText>@context.ExpiryDate.Value.ToString("dd MMM yyyy")</MudText>
+                    }
+                }
+                else
+                {
+                    <MudChip T="string" Color="Color.Success" Size="Size.Small">Lifetime</MudChip>
+                }
+            </MudTd>
+            <MudTd DataLabel="Status">
+                <MudSwitch T="bool" Value="@context.IsActive" Color="Color.Success"
+                           ValueChanged="@((s) => ToggleStatus(context, s))" />
+            </MudTd>
+            <MudTd DataLabel="Actions">
+                @* View QR Button *@
+                <MudIconButton Icon="@Icons.Material.Filled.QrCode" Color="Color.Info" Size="Size.Small"
+                               OnClick="@(() => ShowQr(context))" Title="View QR Card" />
+
+                @* Delete Button - FIXED CONTEXT CONFLICT HERE *@
+                <AuthorizeView Policy="@AppPermissions.Members.Delete" Context="authContext">
+                    <Authorized>
+                        @* We use 'context' here, which refers to the Row (Member) because we renamed AuthorizeView to 'authContext' *@
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                                       OnClick="@(() => DeleteMember(context))" />
+                    </Authorized>
+                </AuthorizeView>
+            </MudTd>
+        </RowTemplate>
+        <PagerContent>
+            <MudTablePager />
+        </PagerContent>
+    </MudTable>
+
+</MudContainer>
+
+@* --- HIDDEN PRINT AREA --- *@
+<div id="printable-card-container" style="display:none;">
+</div>
+
+@code {
+    private List<Member> Members = new();
+    private string searchString = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        Members = await db.Members.OrderByDescending(m => m.JoinDate).ToListAsync();
+    }
+
+    // --- Search Logic ---
+    private bool FilterFunc(Member element) => FilterFunc1(element, searchString);
+
+    private bool FilterFunc1(Member element, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(searchString)) return true;
+        if (element.Name.Contains(searchString, StringComparison.OrdinalIgnoreCase)) return true;
+        if (element.PhoneNumber != null && element.PhoneNumber.Contains(searchString)) return true;
+        return false;
+    }
+
+    // --- Toggle Active Status ---
+    private async Task ToggleStatus(Member member, bool newStatus)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var m = await db.Members.FindAsync(member.Id);
+        if (m != null)
+        {
+            m.IsActive = newStatus;
+            await db.SaveChangesAsync();
+            member.IsActive = newStatus; // Update UI
+            Snackbar.Add(newStatus ? "Member Activated" : "Member Deactivated", Severity.Info);
+        }
+    }
+
+    // --- Show QR Dialog ---
+    private void ShowQr(Member member)
+    {
+        var securePayload = QrService.CreateSecureUrl("Member", member.QrToken);
+        var qrImage = QrService.GenerateQrImage(securePayload);
+
+        var parameters = new DialogParameters();
+        parameters.Add("ContentText", "Scan this at the Gatekeeper terminal.");
+        parameters.Add("QrImage", qrImage);
+        parameters.Add("MemberName", member.Name);
+        parameters.Add("Expiry", member.ExpiryDate.HasValue ? member.ExpiryDate.Value.ToString("dd MMM yyyy") : "Lifetime");
+
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        DialogService.Show<MemberQrDialog>("Membership Card", parameters, options);
+    }
+
+    // --- Delete Member ---
+    private async Task DeleteMember(Member member)
+    {
+        bool? result = await DialogService.ShowMessageBox(
+            "Warning",
+            $"Delete {member.Name}? This cannot be undone.",
+            yesText: "Delete", cancelText: "Cancel");
+
+        if (result == true)
+        {
+            using var db = await DbFactory.CreateDbContextAsync();
+            db.Members.Remove(member);
+            await db.SaveChangesAsync();
+            Members.Remove(member);
+            Snackbar.Add("Member Deleted", Severity.Error);
+        }
+    }
+}

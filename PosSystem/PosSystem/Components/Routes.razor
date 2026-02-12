@@ -1,4 +1,4 @@
-﻿<Router AppAssembly="typeof(Program).Assembly" AdditionalAssemblies="new[] { typeof(Client._Imports).Assembly }">
+﻿@* <Router AppAssembly="typeof(Program).Assembly" AdditionalAssemblies="new[] { typeof(Client._Imports).Assembly }">
     <Found Context="routeData">
         <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
             <NotAuthorized>
@@ -7,3 +7,38 @@
         </AuthorizeRouteView>
     </Found>
 </Router>
+ *@
+ @using PosSystem.Components.Layout
+@using PosSystem.Components.Pages
+@using Microsoft.AspNetCore.Components.Routing
+
+<ErrorBoundary>
+    <ChildContent>
+        
+        @* 1. ROUTER LOGIC *@
+        <Router AppAssembly="@typeof(Program).Assembly" AdditionalAssemblies="new[] { typeof(Client._Imports).Assembly }">
+            <Found Context="routeData">
+                <AuthorizeRouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)">
+                    <NotAuthorized>
+                         @* Redirect unauthenticated users to Login *@
+                         <PosSystem.Components.Pages.Auth.RedirectToLogin />
+                    </NotAuthorized>
+                </AuthorizeRouteView>
+                <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+            </Found>
+            
+            @* 2. 404 NOT FOUND HANDLING *@
+            <NotFound>
+                <LayoutView Layout="@typeof(MainLayout)">
+                    <PosSystem.Components.Pages.NotFound />
+                </LayoutView>
+            </NotFound>
+        </Router>
+
+    </ChildContent>
+    
+    @* 3. GLOBAL CRASH HANDLING *@
+    <ErrorContent Context="ex">
+        <PosSystem.Components.Pages.GlobalError Exception="ex" />
+    </ErrorContent>
+</ErrorBoundary>

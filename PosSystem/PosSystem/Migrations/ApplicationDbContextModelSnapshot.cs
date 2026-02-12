@@ -279,7 +279,7 @@ namespace PosSystem.Migrations
                         new
                         {
                             Id = "cat-retail-01",
-                            CreatedAt = new DateTime(2026, 2, 1, 13, 38, 41, 528, DateTimeKind.Utc).AddTicks(8430),
+                            CreatedAt = new DateTime(2026, 2, 11, 19, 7, 39, 821, DateTimeKind.Utc).AddTicks(3290),
                             DefaultCategoryTerm = "Category",
                             DefaultProductTerm = "Product",
                             Description = "Shops, Boutiques, General Stores",
@@ -289,7 +289,7 @@ namespace PosSystem.Migrations
                         new
                         {
                             Id = "cat-park-01",
-                            CreatedAt = new DateTime(2026, 2, 1, 13, 38, 41, 528, DateTimeKind.Utc).AddTicks(8440),
+                            CreatedAt = new DateTime(2026, 2, 11, 19, 7, 39, 821, DateTimeKind.Utc).AddTicks(3307),
                             DefaultCategoryTerm = "Zone",
                             DefaultProductTerm = "Ticket",
                             Description = "Theme Parks, Zoos, Water Parks",
@@ -299,7 +299,7 @@ namespace PosSystem.Migrations
                         new
                         {
                             Id = "cat-food-01",
-                            CreatedAt = new DateTime(2026, 2, 1, 13, 38, 41, 528, DateTimeKind.Utc).AddTicks(8446),
+                            CreatedAt = new DateTime(2026, 2, 11, 19, 7, 39, 821, DateTimeKind.Utc).AddTicks(3318),
                             DefaultCategoryTerm = "Menu Section",
                             DefaultProductTerm = "Dish",
                             Description = "Food Service, QSR, Fine Dining",
@@ -396,7 +396,7 @@ namespace PosSystem.Migrations
                     b.ToTable("Categories");
                 });
 
-            modelBuilder.Entity("PosSystem.Data.Entities.Membership", b =>
+            modelBuilder.Entity("PosSystem.Data.Entities.MeasurementUnit", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("nvarchar(450)");
@@ -407,8 +407,120 @@ namespace PosSystem.Migrations
                     b.Property<string>("CreatedBy")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<DateTime>("ExpiryDate")
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("LastModifiedAt")
                         .HasColumnType("datetime2");
+
+                    b.Property<string>("LastModifiedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Symbol")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("MeasurementUnits");
+                });
+
+            modelBuilder.Entity("PosSystem.Data.Entities.Member", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Email")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("ExpiryDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime>("JoinDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LastModifiedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("LastModifiedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("MembershipType")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("OptInEmail")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("OptInSms")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("OptInWhatsApp")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("PhoneNumber")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PhotoUrl")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("QrToken")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("QrToken")
+                        .IsUnique();
+
+                    b.ToTable("Members");
+                });
+
+            modelBuilder.Entity("PosSystem.Data.Entities.MemberVisit", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("EntryGate")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
@@ -419,27 +531,22 @@ namespace PosSystem.Migrations
                     b.Property<string>("LastModifiedBy")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("MembershipNumber")
+                    b.Property<string>("MemberId")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("TenantId")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("Tier")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
+                    b.Property<DateTime>("VisitTime")
+                        .HasColumnType("datetime2");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("MemberId");
 
-                    b.ToTable("Memberships");
+                    b.ToTable("MemberVisits");
                 });
 
             modelBuilder.Entity("PosSystem.Data.Entities.Order", b =>
@@ -620,6 +727,9 @@ namespace PosSystem.Migrations
                     b.Property<string>("LastModifiedBy")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("MeasurementUnitId")
+                        .HasColumnType("nvarchar(450)");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -640,6 +750,8 @@ namespace PosSystem.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("CategoryId");
+
+                    b.HasIndex("MeasurementUnitId");
 
                     b.ToTable("Products");
                 });
@@ -1056,7 +1168,7 @@ namespace PosSystem.Migrations
                         new
                         {
                             Id = "type-sales-01",
-                            CreatedAt = new DateTime(2026, 2, 1, 13, 38, 41, 528, DateTimeKind.Utc).AddTicks(8535),
+                            CreatedAt = new DateTime(2026, 2, 11, 19, 7, 39, 821, DateTimeKind.Utc).AddTicks(3700),
                             IsDeleted = false,
                             IsSalesPoint = true,
                             IsStockPoint = true,
@@ -1065,7 +1177,7 @@ namespace PosSystem.Migrations
                         new
                         {
                             Id = "type-warehouse-01",
-                            CreatedAt = new DateTime(2026, 2, 1, 13, 38, 41, 528, DateTimeKind.Utc).AddTicks(8546),
+                            CreatedAt = new DateTime(2026, 2, 11, 19, 7, 39, 821, DateTimeKind.Utc).AddTicks(3712),
                             IsDeleted = false,
                             IsSalesPoint = false,
                             IsStockPoint = true,
@@ -1074,7 +1186,7 @@ namespace PosSystem.Migrations
                         new
                         {
                             Id = "type-kitchen-01",
-                            CreatedAt = new DateTime(2026, 2, 1, 13, 38, 41, 528, DateTimeKind.Utc).AddTicks(8552),
+                            CreatedAt = new DateTime(2026, 2, 11, 19, 7, 39, 821, DateTimeKind.Utc).AddTicks(3722),
                             IsDeleted = false,
                             IsSalesPoint = false,
                             IsStockPoint = false,
@@ -1144,15 +1256,15 @@ namespace PosSystem.Migrations
                     b.Navigation("Product");
                 });
 
-            modelBuilder.Entity("PosSystem.Data.Entities.Membership", b =>
+            modelBuilder.Entity("PosSystem.Data.Entities.MemberVisit", b =>
                 {
-                    b.HasOne("PosSystem.Data.ApplicationUser", "User")
+                    b.HasOne("PosSystem.Data.Entities.Member", "Member")
                         .WithMany()
-                        .HasForeignKey("UserId")
+                        .HasForeignKey("MemberId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("User");
+                    b.Navigation("Member");
                 });
 
             modelBuilder.Entity("PosSystem.Data.Entities.OrderItem", b =>
@@ -1185,7 +1297,13 @@ namespace PosSystem.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("PosSystem.Data.Entities.MeasurementUnit", "MeasurementUnit")
+                        .WithMany()
+                        .HasForeignKey("MeasurementUnitId");
+
                     b.Navigation("Category");
+
+                    b.Navigation("MeasurementUnit");
                 });
 
             modelBuilder.Entity("PosSystem.Data.Entities.StockMovement", b =>

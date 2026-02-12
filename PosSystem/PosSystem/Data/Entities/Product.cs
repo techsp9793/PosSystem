@@ -33,7 +33,10 @@ namespace PosSystem.Data.Entities
 
         // The actual count (only relevant if TrackStock is true).
         public int StockQuantity { get; set; } = 0;
+        public string? MeasurementUnitId { get; set; }
 
+        [ForeignKey("MeasurementUnitId")]
+        public virtual MeasurementUnit? MeasurementUnit { get; set; }
         public virtual ICollection<UnitProduct> UnitAvailability { get; set; } = new List<UnitProduct>();
     }
 }

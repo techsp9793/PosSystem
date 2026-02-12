@@ -127,7 +127,15 @@ namespace PosSystem.Data.Seeders
                         AppPermissions.Settings.Payments ,
                         AppPermissions.Facilities.View,
                         AppPermissions.Facilities.GenerateQr,
-                        AppPermissions.Facilities.Gatekeeper
+                        AppPermissions.Facilities.Gatekeeper,
+                        AppPermissions.Members.View,
+                        AppPermissions.Members.Register,
+                        AppPermissions.Members.Edit,
+                        AppPermissions.Members.Delete,
+                        AppPermissions.Catalog.MeasurementUnits,
+                        AppPermissions.Reports.View,
+                        AppPermissions.Reports.Sales,
+                        AppPermissions.Reports.Inventory
                     };
 
                     // 3. Assign missing ones

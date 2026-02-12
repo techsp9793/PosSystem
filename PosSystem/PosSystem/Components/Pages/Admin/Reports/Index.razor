@@ -1,0 +1,277 @@
+﻿@page "/admin/reports"
+@using System.IO
+@using Microsoft.AspNetCore.Authorization
+@using PosSystem.Data.Entities
+@using PosSystem.Permissions
+@using PosSystem.Services
+
+@attribute [Authorize(Policy = AppPermissions.Reports.View)]
+
+@inject ReportService ReportService
+@inject ITenantService TenantService
+@inject IJSRuntime JS
+
+<PageTitle>Reports</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <div class="d-flex justify-space-between align-center mb-4">
+        <MudText Typo="Typo.h5"><b>Reports</b></MudText>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Print" OnClick="PrintReport">
+            Print / Save PDF
+        </MudButton>
+    </div>
+
+    @* --- ADVANCED SEARCH TOGGLE --- *@
+    <MudButton OnClick="@(() => _filtersExpanded = !_filtersExpanded)"
+               Variant="Variant.Filled"
+               Color="Color.Primary"
+               EndIcon="@(_filtersExpanded ? Icons.Material.Filled.KeyboardArrowUp : Icons.Material.Filled.KeyboardArrowDown)"
+               Class="mb-2">
+        Advanced Search
+    </MudButton>
+
+    @* --- COLLAPSIBLE CONTROLS --- *@
+    <div id="report-controls">
+        <MudCollapse Expanded="_filtersExpanded">
+            <MudPaper Class="pa-4 mb-4" Elevation="3">
+
+                @* QUICK FILTERS *@
+                <MudText Typo="Typo.subtitle2" Class="mb-2 text-muted">Quick Ranges:</MudText>
+                <MudChipSet T="string" SelectedValue="selectedRange" SelectedValueChanged="OnRangeSelected" Class="mb-4">
+                    <MudChip Text="Today" Value="@("Today")" Color="Color.Primary" Variant="Variant.Outlined" />
+                    <MudChip Text="Yesterday" Value="@("Yesterday")" Color="Color.Primary" Variant="Variant.Outlined" />
+                    <MudChip Text="Last 7 Days" Value="@("7Days")" Color="Color.Primary" Variant="Variant.Outlined" />
+                    <MudChip Text="Last 30 Days" Value="@("30Days")" Color="Color.Primary" Variant="Variant.Outlined" />
+                    <MudChip Text="This Month" Value="@("ThisMonth")" Color="Color.Primary" Variant="Variant.Outlined" />
+                    <MudChip Text="Custom" Value="@("Custom")" Color="Color.Secondary" Variant="Variant.Outlined" />
+                </MudChipSet>
+
+                <MudDivider Class="mb-4" />
+
+                @* DATE PICKERS *@
+                <MudGrid Class="align-center">
+                    <MudItem xs="12" sm="3">
+                        <MudDatePicker Label="Start Date" @bind-Date="StartDate" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    </MudItem>
+                    <MudItem xs="12" sm="3">
+                        <MudDatePicker Label="End Date" @bind-Date="EndDate" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    </MudItem>
+                    <MudItem xs="12" sm="3">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" OnClick="LoadAllReports"
+                                   StartIcon="@Icons.Material.Filled.Refresh" Disabled="@isLoading">
+                            @if (isLoading)
+                            {
+                                <MudText>Crunching...</MudText>
+                            }
+                            else
+                            {
+
+                                <MudText>Generate Data</MudText>
+                            }
+                        </MudButton>
+                    </MudItem>
+                    <MudItem xs="12" sm="3">
+                        <MudMenu Label="Export Data" Variant="Variant.Filled" Color="Color.Success" EndIcon="@Icons.Material.Filled.KeyboardArrowDown" FullWidth="true">
+                            <MudMenuItem OnClick="@(() => ExportCsv(SalesOrders, "Sales"))">Export Sales (Excel/CSV)</MudMenuItem>
+                            <MudMenuItem OnClick="@(() => ExportCsv(ProductStats, "Products"))">Export Products (Excel/CSV)</MudMenuItem>
+                            <MudMenuItem OnClick="@(() => ExportCsv(StockStats, "Inventory"))">Export Inventory (Excel/CSV)</MudMenuItem>
+                        </MudMenu>
+                    </MudItem>
+                </MudGrid>
+            </MudPaper>
+        </MudCollapse>
+    </div>
+
+    @* --- DYNAMIC PRINT HEADER (Visible only when printing) --- *@
+    <div id="print-header" style="display:none; text-align:center; margin-bottom: 20px;">
+        <h1>@CurrentReportTitle</h1>
+        @if (activeTabIndex != 2)
+        {
+            <p><b>Filter:</b> @(StartDate?.ToString("dd MMM yyyy") ?? "?") to @(EndDate?.ToString("dd MMM yyyy") ?? "?")</p>
+        }
+        else
+        {
+            <p><b>Filter:</b> Current Stock Snapshot</p>
+        }
+        <hr style="border-top: 2px solid #333;" />
+    </div>
+
+    <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-2" @bind-ActivePanelIndex="activeTabIndex">
+
+        @* INDEX 0: SALES *@
+        <MudTabPanel Text="Sales Report" Icon="@Icons.Material.Filled.AttachMoney">
+            <MudDataGrid Items="@SalesOrders" Filterable="true" SortMode="SortMode.Multiple" Groupable="true" QuickFilter="@_quickFilterSales">
+                <ToolBarContent>
+                    <MudText Typo="Typo.h6">Sales Data</MudText>
+                    <MudSpacer />
+                    <MudTextField @bind-Value="salesSearch" Placeholder="Search..." Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Class="mt-0" />
+                </ToolBarContent>
+                <Columns>
+                    <PropertyColumn Property="x => x.CreatedAt" Title="Date" Format="g" />
+                    <PropertyColumn Property="x => x.OrderNumber" Title="Order ID" />
+                    <PropertyColumn Property="x => x.CustomerName" Title="Customer" />
+                    <PropertyColumn Property="x => x.PaymentMethod" Title="Payment" />
+                    <PropertyColumn Property="x => x.Status" Title="Status" />
+                    <PropertyColumn Property="x => x.TotalAmount" Title="Total" Format="N2" CellStyle="font-weight:bold; text-align:right" HeaderStyle="text-align:right" />
+                </Columns>
+                <PagerContent><MudDataGridPager T="Order" /></PagerContent>
+            </MudDataGrid>
+        </MudTabPanel>
+
+        @* INDEX 1: PRODUCTS *@
+        <MudTabPanel Text="Products" Icon="@Icons.Material.Filled.BarChart">
+            <MudDataGrid Items="@ProductStats" Filterable="true" SortMode="SortMode.Single">
+                <Columns>
+                    <PropertyColumn Property="x => x.ProductName" Title="Product Name" />
+                    <PropertyColumn Property="x => x.QuantitySold" Title="Qty Sold" CellStyle="text-align:center" />
+                    <PropertyColumn Property="x => x.TotalRevenue" Title="Revenue" Format="N2" CellStyle="text-align:right" />
+                </Columns>
+                <PagerContent><MudDataGridPager T="ProductStats" /></PagerContent>
+            </MudDataGrid>
+        </MudTabPanel>
+
+        @* INDEX 2: INVENTORY *@
+        <MudTabPanel Text="Inventory" Icon="@Icons.Material.Filled.Inventory">
+            <MudDataGrid Items="@StockStats" Filterable="true" Groupable="true">
+                <Columns>
+                    <PropertyColumn Property="x => x.Category" Title="Category" Grouping="true" />
+                    <PropertyColumn Property="x => x.ProductName" Title="Item" />
+                    <PropertyColumn Property="x => x.CurrentStock" Title="Stock Level" />
+                    <PropertyColumn Property="x => x.SellingPrice" Title="Unit Price" Format="N2" />
+                    <PropertyColumn Property="x => x.PotentialValue" Title="Total Value" Format="N2" CellStyle="font-weight:bold" />
+                </Columns>
+                <PagerContent><MudDataGridPager T="StockStats" /></PagerContent>
+            </MudDataGrid>
+        </MudTabPanel>
+
+    </MudTabs>
+</MudContainer>
+
+<script>
+    function downloadFileFromStream(fileName, content) {
+        var blob = new Blob([content], { type: "text/csv" });
+        var url = URL.createObjectURL(blob);
+        var anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = fileName;
+        anchor.click();
+        URL.revokeObjectURL(url);
+    }
+    function printPage() { window.print(); }
+</script>
+
+<style>
+    @@media print {
+        body * {
+            visibility: hidden;
+        }
+
+        .mud-layout * {
+            visibility: hidden;
+        }
+
+        .mud-main-content, .mud-main-content * {
+            visibility: visible;
+        }
+        /* Hide toggle button too */
+        #report-controls, .mud-tabs-toolbar, button {
+            display: none !important;
+        }
+
+        #print-header {
+            display: block !important;
+        }
+
+        .mud-main-content {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        .mud-table-container {
+            overflow: visible !important;
+        }
+    }
+</style>
+
+@code {
+    private DateTime? StartDate = DateTime.Today;
+    private DateTime? EndDate = DateTime.Today;
+    private bool isLoading = false;
+    private string salesSearch = "";
+    private string selectedRange = "Today";
+    private int activeTabIndex = 0;
+
+    // Toggle for Advanced Search
+    private bool _filtersExpanded = false;
+
+    private string CurrentReportTitle => activeTabIndex switch
+    {
+        0 => "Sales Report",
+        1 => "Product Performance Report",
+        2 => "Inventory Valuation Report",
+        _ => "Business Report"
+    };
+
+    private List<Order> SalesOrders = new();
+    private List<ProductStats> ProductStats = new();
+    private List<StockStats> StockStats = new();
+
+    private async Task OnRangeSelected(string range)
+    {
+        selectedRange = range;
+        var today = DateTime.Today;
+
+        switch (range)
+        {
+            case "Today": StartDate = today; EndDate = today; break;
+            case "Yesterday": StartDate = today.AddDays(-1); EndDate = today.AddDays(-1); break;
+            case "7Days": StartDate = today.AddDays(-6); EndDate = today; break;
+            case "30Days": StartDate = today.AddDays(-29); EndDate = today; break;
+            case "ThisMonth": StartDate = new DateTime(today.Year, today.Month, 1); EndDate = today; break;
+            case "Custom": return;
+        }
+
+        if (range != "Custom") await LoadAllReports();
+    }
+
+    private Func<Order, bool> _quickFilterSales => x =>
+    {
+        if (string.IsNullOrWhiteSpace(salesSearch)) return true;
+        if (x.OrderNumber.Contains(salesSearch, StringComparison.OrdinalIgnoreCase)) return true;
+        if (x.CustomerName != null && x.CustomerName.Contains(salesSearch, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAllReports();
+    }
+
+    private async Task LoadAllReports()
+    {
+        if (StartDate == null || EndDate == null) return;
+        isLoading = true;
+        var tenantId = TenantService.GetTenantId();
+
+        SalesOrders = await ReportService.GetSalesReportAsync(tenantId, StartDate.Value, EndDate.Value);
+        ProductStats = await ReportService.GetProductPerformanceAsync(tenantId, StartDate.Value, EndDate.Value);
+        StockStats = await ReportService.GetStockValuationAsync(tenantId);
+
+        isLoading = false;
+    }
+
+    private async Task ExportCsv<T>(IEnumerable<T> data, string name)
+    {
+        var bytes = ReportService.GenerateCsv(data);
+        await JS.InvokeVoidAsync("downloadFileFromStream", $"{name}_Report.csv", bytes);
+    }
+
+    private async Task PrintReport()
+    {
+        await JS.InvokeVoidAsync("printPage");
+    }
+}

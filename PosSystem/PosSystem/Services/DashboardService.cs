@@ -1,59 +1,85 @@
-﻿using PosSystem.Data.Repositories.Interfaces;
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using PosSystem.Data;
+using PosSystem.Data.Entities;
 
 namespace PosSystem.Services
 {
     public class DashboardService
     {
-        private readonly IUnitOfWork _unitOfWork;
-        private readonly IDbContextFactory<LocalDbContext> _localDbFactory;
+        private readonly IDbContextFactory<ApplicationDbContext> _dbFactory;
 
-        public DashboardService(IUnitOfWork unitOfWork, IDbContextFactory<LocalDbContext> localDbFactory)
+        public DashboardService(IDbContextFactory<ApplicationDbContext> dbFactory)
         {
-            _unitOfWork = unitOfWork;
-            _localDbFactory = localDbFactory;
+            _dbFactory = dbFactory;
         }
 
-        public async Task<DashboardStats> GetDailyStatsAsync(DateTime date, string unitId)
+        public async Task<DashboardStats> GetStatsAsync(string? tenantId)
         {
-            var start = date.Date;
-            var end = date.Date.AddDays(1).AddTicks(-1);
+            using var db = await _dbFactory.CreateDbContextAsync();
+            var today = DateTime.UtcNow.Date;
 
-            // 1. Cloud Data (Filtered by Unit)
-            var cloudOrders = await _unitOfWork.Orders.GetOrdersByDateRangeAsync(start, end);
-            var filteredCloud = cloudOrders.Where(o => o.UnitId == unitId).ToList();
-
-            // 2. Local Data (Filtered by Unit)
-            // This is "Resilient" - it shows sales even if they haven't synced yet.
-            using var localDb = await _localDbFactory.CreateDbContextAsync();
-            var localOrders = await localDb.Orders
-                .Where(o => o.UnitId == unitId && o.CreatedAt >= start && o.CreatedAt <= end)
+            // 1. Sales Stats (Today)
+            var todaysOrders = await db.Orders
+                .Where(o => o.TenantId == tenantId && o.CreatedAt >= today && o.Status != "Cancelled")
                 .ToListAsync();
 
-            // 3. Merge (Dedup by ID)
-            var allOrders = filteredCloud.Concat(localOrders)
-                                         .GroupBy(o => o.Id)
-                                         .Select(g => g.First())
-                                         .ToList();
+            decimal dailyRevenue = todaysOrders.Sum(o => o.TotalAmount);
+            int orderCount = todaysOrders.Count;
+
+            // 2. Member Stats
+            int activeMembers = await db.Members
+                .Where(m => m.TenantId == tenantId && m.IsActive)
+                .CountAsync();
+
+            int todaysVisits = await db.MemberVisits
+                .Where(v => v.TenantId == tenantId && v.VisitTime >= today)
+                .CountAsync();
+
+            // 3. Inventory Alerts
+            int lowStockCount = await db.Products
+                .Where(p => p.TenantId == tenantId && p.TrackStock && p.StockQuantity <= 10)
+                .CountAsync();
 
             return new DashboardStats
             {
-                TotalRevenue = allOrders.Sum(o => o.TotalAmount),
-                TotalOrders = allOrders.Count,
-                AverageOrderValue = allOrders.Any() ? allOrders.Average(o => o.TotalAmount) : 0,
-                CashSales = allOrders.Where(o => o.PaymentMethod == "Cash").Sum(o => o.TotalAmount),
-                CardSales = allOrders.Where(o => o.PaymentMethod != "Cash").Sum(o => o.TotalAmount)
+                DailyRevenue = dailyRevenue,
+                DailyOrders = orderCount,
+                ActiveMembers = activeMembers,
+                TodaysVisits = todaysVisits,
+                LowStockItems = lowStockCount
             };
+        }
+
+        public async Task<List<double>> GetWeeklySalesDataAsync(string? tenantId)
+        {
+            using var db = await _dbFactory.CreateDbContextAsync();
+            var last7Days = DateTime.UtcNow.Date.AddDays(-6);
+
+            var salesData = await db.Orders
+                .Where(o => o.TenantId == tenantId && o.CreatedAt >= last7Days && o.Status != "Cancelled")
+                .GroupBy(o => o.CreatedAt.Date)
+                .Select(g => new { Date = g.Key, Total = g.Sum(o => o.TotalAmount) })
+                .ToListAsync();
+
+            // Fill in missing days with 0
+            var result = new List<double>();
+            for (int i = 0; i < 7; i++)
+            {
+                var dateToCheck = last7Days.AddDays(i);
+                var entry = salesData.FirstOrDefault(s => s.Date == dateToCheck);
+                result.Add(entry != null ? (double)entry.Total : 0);
+            }
+
+            return result;
         }
     }
 
     public class DashboardStats
     {
-        public decimal TotalRevenue { get; set; }
-        public int TotalOrders { get; set; }
-        public decimal AverageOrderValue { get; set; }
-        public decimal CashSales { get; set; }
-        public decimal CardSales { get; set; }
+        public decimal DailyRevenue { get; set; }
+        public int DailyOrders { get; set; }
+        public int ActiveMembers { get; set; }
+        public int TodaysVisits { get; set; }
+        public int LowStockItems { get; set; }
     }
 }
